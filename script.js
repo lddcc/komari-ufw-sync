@@ -36,6 +36,7 @@ const WL_FILE = STORE + "/whitelist.json";
 const PUB_FILE = STORE + "/pubports.json";
 const SET_FILE = STORE + "/settings.json";
 const STATUS_FILE = STORE + "/laststatus.json";
+const PENDING_FILE = STORE + "/pending.json"; // last dispatched run (task_ids), for async result polling
 
 // Read-only status probe: ufw state, ufw-docker integration, and counts of each
 // of our tagged rule sets.
@@ -270,16 +271,19 @@ function buildCommand(mode, wl4, wl6, ddns4, ddns6, ptcp, pudp, manageTs) {
   );
 }
 
-async function syncAll(mode, uuids) {
+// Dispatch one admin:exec per node (each carries its own public ports) and
+// return immediately with the task_ids — does NOT wait for results. The task
+// list is also persisted (PENDING_FILE) so the page can keep polling results
+// even across reloads. Result-fetching is decoupled (collectResults), so the
+// dispatch request is fast and never blocks on slow agent heartbeats.
+async function dispatchRun(mode, uuids) {
   const settings = loadSettings();
   const wl = loadWL();
   const pub = loadPub();
   const nodes = await listClients();
-  const nameByUuid = {};
-  nodes.forEach((n) => (nameByUuid[n.uuid] = n.name));
 
   const target = targetNodes(nodes, uuids);
-  if (target.length === 0) return { error: "no target nodes selected" };
+  if (target.length === 0) return { error: "no target nodes selected", tasks: [] };
 
   let wl4 = wl.static_v4.slice();
   let wl6 = wl.static_v6.slice();
@@ -291,47 +295,81 @@ async function syncAll(mode, uuids) {
   wl4 = uniq(wl4);
   wl6 = uniq(wl6);
 
-  // one exec per node so each carries its own public ports
   const tasks = [];
   for (const n of target) {
     const np = pub[n.uuid] || { tcp: [], udp: [] };
     const command = buildCommand(mode, wl4, wl6, wl.ddns_v4, wl.ddns_v6, np.tcp, np.udp, settings.manage_tailscale);
     try {
       const summary = await server.call("admin:exec", { command, clients: [n.uuid] });
-      tasks.push({ uuid: n.uuid, node: n.name, task_id: summary && summary.task_id });
+      tasks.push({ uuid: n.uuid, node: n.name, task_id: (summary && summary.task_id) || null });
     } catch (e) {
       tasks.push({ uuid: n.uuid, node: n.name, task_id: null, err: String((e && e.message) || e) });
     }
   }
-  console.log(
-    `[ufw-sync] mode=${mode} targets=${target.length} wl_v4=${wl4.length} wl_v6=${wl6.length}`
-  );
-
-  const done = await pollMany(tasks);
-  const statusEntries = [];
-  const results = tasks.map((t) => {
-    const r = t.task_id ? done[t.task_id] : null;
-    const output = r ? String(r.result || "").trim() : (t.err || "no result");
-    if (r) {
-      const st = parseStatusLine(output);
-      if (st) statusEntries.push(Object.assign({ uuid: t.uuid }, st));
-    }
-    return { uuid: t.uuid, node: t.node, exit_code: r ? r.exit_code : null, output };
-  });
-  results.forEach((r) =>
-    console.log(`[ufw-sync] ${r.node} exit=${r.exit_code} :: ${String(r.output).replace(/\n/g, " | ")}`)
-  );
-  const statusMap = mergeStatus(statusEntries); // persist refreshed status
-  const missing = results.filter((r) => r.exit_code == null).map((r) => r.node);
+  writeJson(PENDING_FILE, { mode: mode, ts: Date.now(), tasks: tasks });
+  console.log(`[ufw-sync] dispatched mode=${mode} targets=${target.length} wl_v4=${wl4.length} wl_v6=${wl6.length}`);
   return {
-    mode,
-    whitelist: { v4: wl4, v6: wl6, ddns_v4: wl.ddns_v4, ddns_v6: wl.ddns_v6 },
+    mode: mode,
     dispatched: target.length,
-    returned: results.filter((r) => r.exit_code != null).length,
-    missing,
-    results,
-    status: target.map((n) => Object.assign({ uuid: n.uuid, node: n.name }, statusMap[n.uuid] || {})),
+    tasks: tasks,
+    whitelist: { v4: wl4, v6: wl6, ddns_v4: wl.ddns_v4, ddns_v6: wl.ddns_v6 },
   };
+}
+
+// One non-blocking pass: fetch whatever results are ready for the given tasks,
+// mark the rest pending, persist status for the completed ones. The page calls
+// this repeatedly until done. (Falls back to the persisted PENDING run.)
+async function collectResults(tasks) {
+  if (!Array.isArray(tasks) || tasks.length === 0) {
+    tasks = ((readJson(PENDING_FILE, {}) || {}).tasks) || [];
+  }
+  const statusEntries = [];
+  let pending = 0;
+  const results = [];
+  for (const t of tasks) {
+    if (t.task_id == null) {
+      results.push({ uuid: t.uuid, node: t.node, exit_code: null, output: t.err || "dispatch failed", pending: false });
+      continue;
+    }
+    let r = null;
+    try {
+      const arr = await server.call("admin:getTaskResultsByTaskId", { task_id: t.task_id });
+      if (Array.isArray(arr) && arr.length >= 1) r = arr[0];
+    } catch (e) { /* treat as still-pending */ }
+    if (!r) {
+      pending++;
+      results.push({ uuid: t.uuid, node: t.node, exit_code: null, output: null, pending: true });
+      continue;
+    }
+    const output = String(r.result || "").trim();
+    const st = parseStatusLine(output);
+    if (st) statusEntries.push(Object.assign({ uuid: t.uuid }, st));
+    results.push({ uuid: t.uuid, node: t.node, exit_code: r.exit_code, output: output, pending: false });
+  }
+  const statusMap = mergeStatus(statusEntries); // persist refreshed status
+  return {
+    results: results,
+    pending: pending,
+    done: pending === 0,
+    status: results.map((r) => Object.assign({ uuid: r.uuid, node: r.node }, statusMap[r.uuid] || {})),
+  };
+}
+
+// Blocking sync used by the cron (background — safe to wait). Dispatches then
+// polls until all results are in or we time out.
+async function syncAll(mode, uuids) {
+  const d = await dispatchRun(mode, uuids);
+  if (d.error) return d;
+  let c = { results: [], pending: d.tasks.length, done: false, status: [] };
+  for (let i = 0; i < POLL_ATTEMPTS; i++) {
+    await sleep(POLL_INTERVAL_MS);
+    c = await collectResults(d.tasks);
+    if (c.done) break;
+  }
+  c.results.forEach((r) =>
+    console.log(`[ufw-sync] ${r.node} exit=${r.exit_code} :: ${String(r.output || "(pending)").replace(/\n/g, " | ")}`)
+  );
+  return Object.assign({ mode: mode, dispatched: d.dispatched, whitelist: d.whitelist, missing: c.results.filter((r) => r.pending).map((r) => r.node) }, c);
 }
 
 async function statusAll(uuids) {
@@ -447,13 +485,26 @@ function load() {
     }
   });
 
-  // UI: run sync (mode: check|apply) on selected nodes
+  // UI: dispatch a sync (mode: check|apply) on selected nodes. Returns the
+  // task list immediately; results are fetched separately via /ufw/api/results.
   server.route("POST", "/ufw/api/run", async (req, res) => {
     if (!(await guard(req, res))) return;
     try {
       const body = parseBody(req);
       const mode = body.mode === "apply" ? "apply" : "check";
-      json(res, 200, await syncAll(mode, body.uuids));
+      json(res, 200, await dispatchRun(mode, body.uuids));
+    } catch (e) {
+      json(res, 500, { error: String((e && e.message) || e) });
+    }
+  });
+
+  // UI: fetch results for a dispatched run (poll this until done=true). Body may
+  // carry the task list from /run; otherwise the last persisted run is used.
+  server.route("POST", "/ufw/api/results", async (req, res) => {
+    if (!(await guard(req, res))) return;
+    try {
+      const body = parseBody(req);
+      json(res, 200, await collectResults(Array.isArray(body.tasks) ? body.tasks : null));
     } catch (e) {
       json(res, 500, { error: String((e && e.message) || e) });
     }

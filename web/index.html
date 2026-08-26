@@ -198,26 +198,62 @@ $("#btnStatus").onclick = async () => {
   } catch (e) { toast("探测失败: " + e); } finally { setBusy(false); }
 };
 
+const RESULT_POLLS = 60, RESULT_INTERVAL_MS = 3000; // poll up to ~3 min for agents to report back
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+function setResultCell(uuid, text) {
+  const c = document.querySelector('[data-res="' + uuid + '"]'); if (c) c.innerHTML = text;
+}
+function applyResult(x) {
+  const n = nodes.find(n => n.uuid === x.uuid) || nodes.find(n => n.name === x.node);
+  const uuid = n ? n.uuid : x.uuid;
+  if (x.pending) { setResultCell(uuid, '<span class="pill muted">⏳ 等待中</span>'); return; }
+  const out = x.output || "";
+  const first = out.split("\n").find(l => /MODE=|SKIP|no change|ERROR|applied|pub|Bad port/.test(l)) || ("exit=" + x.exit_code);
+  const txt = first.replace(/^\[ufw-sync\]\s*/, "");
+  if (n) n.lastResult = txt;
+  const bad = x.exit_code !== 0 || /ERROR|Bad port/.test(out);
+  setResultCell(uuid, '<span class="pill ' + (bad ? "warn" : "ok") + '">' + escapeHtml("exit=" + x.exit_code) + '</span> ' + escapeHtml(txt));
+}
+
 async function run(mode) {
   if (selected.size === 0) { toast("未选择任何节点"); return; }
   if (mode === "apply" && !confirm("将对选中的 " + selected.size + " 台节点真正写入 ufw 规则，确认？")) return;
-  clearLog(); setBusy(true); toast(mode === "apply" ? "正在应用…" : "正在 dry-run…");
+  clearLog(); setBusy(true); toast(mode === "apply" ? "正在下发…" : "正在下发 dry-run…");
   logln("== " + (mode === "apply" ? "APPLY" : "DRY-RUN") + " on " + selected.size + " nodes ==");
+  let tasks;
   try {
-    const r = await api("/ufw/api/run", { method: "POST", body: JSON.stringify({ mode, uuids: Array.from(selected) }) });
-    (r.results || []).forEach(x => {
-      logln("--- " + x.node + "  exit=" + x.exit_code + " ---");
-      logln(x.output || "");
-      const n = nodes.find(n => n.uuid === x.uuid) || nodes.find(n => n.name === x.node); if (!n) return;
-      const first = (x.output || "").split("\n").find(l => /MODE=|SKIP|no change|ERROR|applied|pub/.test(l)) || ("exit=" + x.exit_code);
-      n.lastResult = first.replace(/^\[ufw-sync\]\s*/, "");
-      const c = document.querySelector('[data-res="' + n.uuid + '"]'); if (c) c.textContent = n.lastResult;
-    });
-    // sync also refreshes status (parsed from each node's STATUS line)
-    (r.status || []).forEach(x => applyStatus(x.uuid, x));
-    if (r.missing && r.missing.length) logln("(no response: " + r.missing.join(", ") + ")");
-    toast("完成");
-  } catch (e) { toast("执行失败: " + e); logln("ERROR " + e); } finally { setBusy(false); }
+    const d = await api("/ufw/api/run", { method: "POST", body: JSON.stringify({ mode, uuids: Array.from(selected) }) });
+    if (d.error) { toast("下发失败: " + d.error); logln("ERROR " + d.error); setBusy(false); return; }
+    tasks = d.tasks || [];
+    tasks.forEach(t => setResultCell(t.uuid, '<span class="pill muted">⏳ 等待中</span>'));
+    logln("已下发 " + tasks.length + " 个任务，等待各节点上报结果…");
+  } catch (e) { toast("下发失败: " + e); logln("ERROR " + e); setBusy(false); return; }
+
+  // poll results until every node has returned or we hit the time budget
+  const seen = new Set();
+  try {
+    for (let i = 0; i < RESULT_POLLS; i++) {
+      await sleep(RESULT_INTERVAL_MS);
+      const r = await api("/ufw/api/results", { method: "POST", body: JSON.stringify({ tasks }) });
+      (r.results || []).forEach(applyResult);
+      (r.status || []).forEach(x => applyStatus(x.uuid, x));
+      (r.results || []).forEach(x => {
+        if (!x.pending && !seen.has(x.uuid)) {
+          seen.add(x.uuid);
+          logln("--- " + x.node + "  exit=" + x.exit_code + " ---");
+          logln(x.output || "");
+        }
+      });
+      const done = (r.results || []).length - (r.pending || 0);
+      toast("已返回 " + done + " / " + (r.results || []).length);
+      if (r.done) { toast("完成（" + (r.results || []).length + " 台全部返回）"); setBusy(false); return; }
+    }
+    const stillPending = tasks.filter(t => !seen.has(t.uuid)).map(t => t.node);
+    logln("(超时未返回: " + stillPending.join(", ") + " — 稍后点「刷新状态」或重试)");
+    toast("部分节点超时未上报（" + stillPending.length + " 台）");
+  } catch (e) { toast("获取结果失败: " + e); logln("ERROR " + e); }
+  finally { setBusy(false); }
 }
 $("#btnDry").onclick = () => run("check");
 $("#btnApply").onclick = () => run("apply");

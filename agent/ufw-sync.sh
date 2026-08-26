@@ -25,7 +25,7 @@
 #   - Incremental for trusted (add-new / delete-stale, no full-rebuild window).
 set -euo pipefail
 
-VER="0.7.2"                # bumped with the plugin; printed so we can see which applier is live
+VER="0.7.3"                # bumped with the plugin; printed so we can see which applier is live
 TAG_TRUST="komari-ufw-sync"
 TAG_PUB="komari-ufw-pub"
 TAG_TS="komari-ufw-ts"
