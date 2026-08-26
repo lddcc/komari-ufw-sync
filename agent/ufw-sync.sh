@@ -90,20 +90,32 @@ if [[ "$MODE" != "apply" ]]; then
   exit 0
 fi
 
-# --- apply ------------------------------------------------------------------
-# Delete stale tagged rules by number (descending so indices stay valid).
-mapfile -t nums < <(ufw status numbered 2>/dev/null | grep -F "$TAG" \
-  | sed -n 's/^\[[[:space:]]*\([0-9]\+\)\].*/\1/p' | sort -rn)
-for n in "${nums[@]:-}"; do
-  [[ -n "$n" ]] && ufw --force delete "$n" >/dev/null || true
-done
+# --- apply (incremental) ----------------------------------------------------
+# Add only the new sources, delete only the stale ones; untouched sources keep
+# their rules, so there is never a window without the trusted set, and no churn.
 
-# Re-add the full desired set (host + docker-published).
+# 1) additions first (so trust is only ever added, never briefly missing)
 while IFS= read -r src; do
   [[ -z "$src" ]] && continue
   ufw allow from "$src" comment "$TAG" >/dev/null
   ufw route allow from "$src" comment "$TAG" >/dev/null
-done <<< "$desired"
+done <<< "$to_add"
+
+# 2) delete rules whose source is in to_del, by number (descending)
+if [[ -n "$to_del" ]]; then
+  # shell-safe lookup set of stale sources
+  is_stale() { grep -qxF "$1" <<< "$to_del"; }
+  while :; do
+    line=$(ufw status numbered 2>/dev/null | grep -F "$TAG" | while IFS= read -r l; do
+      src=$(echo "$l" | sed 's/#.*//' | awk '{print $NF}')
+      if grep -qxF "$src" <<< "$to_del"; then echo "$l"; break; fi
+    done)
+    [[ -z "$line" ]] && break
+    num=$(echo "$line" | sed -n 's/^\[[[:space:]]*\([0-9]\+\)\].*/\1/p')
+    [[ -z "$num" ]] && break
+    ufw --force delete "$num" >/dev/null || break
+  done
+fi
 
 ufw reload >/dev/null
-log "applied: $(echo "$desired" | wc -l | tr -d ' ') trusted sources synced"
+log "applied: +$(echo "$to_add" | sed '/^$/d' | wc -l | tr -d ' ') -$(echo "$to_del" | sed '/^$/d' | wc -l | tr -d ' ') ($(echo "$desired" | wc -l | tr -d ' ') trusted total)"
