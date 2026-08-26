@@ -51,11 +51,25 @@ zero risk.
 
 ## Install & test (Phase 1)
 
+### Option A — plugin source (recommended)
+
+Add this repo's catalog as a **plugin source** in Komari, then install/update
+from the UI (needs the repo to be **public** so Komari can fetch the release):
+
+```
+https://raw.githubusercontent.com/lddcc/komari-ufw-sync/main/v1.json
+```
+
+### Option B — manual upload
+
 1. Zip the plugin (manifest + script at ZIP **root**, no nested folder):
    ```bash
    ./build.sh        # produces dist/ufw-sync-<version>.zip
    ```
-2. Komari admin panel → **Plugins → Upload** the zip.
+2. Komari admin panel → **Plugins → Upload** the zip (or grab it from Releases).
+
+### Then
+
 3. It declares sensitive permissions (`allowSystemRPC`, `allowRoutes`) → approve.
 4. **Enable** the plugin (plugins default to disabled).
 5. Trigger a probe:

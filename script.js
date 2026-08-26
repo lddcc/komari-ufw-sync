@@ -133,5 +133,5 @@ function unload() {
   console.log("[ufw-sync] Phase 1 unloaded");
 }
 
-// Komari calls load() on enable/startup and unload() on disable/shutdown.
-module.exports = { load, unload };
+// Komari's goja runtime discovers top-level `load`/`unload` functions.
+// Do NOT use `module.exports` — `module` is not defined in the entry script.
