@@ -1,0 +1,16 @@
+{
+  "$schema": "https://raw.githubusercontent.com/komari-monitor/plugin-sdk/master/schema/komari-plugin.schema.json",
+  "name": "UFW Sync",
+  "short": "ufw-sync",
+  "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Phase 1 = read-only probe (no firewall changes).",
+  "author": "lddcc",
+  "version": "0.1.0",
+  "url": "https://github.com/lddcc/komari-ufw-sync",
+  "komari": ">=1.4.0",
+  "entry": "script.js",
+  "permissions": {
+    "allowSystemRPC": true,
+    "allowRoutes": true,
+    "timeout": 60
+  }
+}
