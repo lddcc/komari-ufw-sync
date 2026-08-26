@@ -407,13 +407,27 @@ function load() {
         if (k in body) wl[k] = cleanList(body[k]);
       });
       saveWL(wl);
-      // operational switches -> managed config
-      const data = Object.assign({}, (await server.getConfig()) || {});
-      if ("interval_minutes" in body) data.interval_minutes = Number(body.interval_minutes) || 0;
-      if ("apply" in body) data.apply = !!body.apply;
-      if ("include_fleet" in body) data.include_fleet = !!body.include_fleet;
-      await server.call("admin:setPluginConfiguration", { short: SHORT, data });
-      json(res, 200, { ok: true });
+      // operational switches -> managed config. Writing the managed config
+      // reloads the plugin (slow), so only do it when a switch actually
+      // changed; whitelist-list-only edits stay fs-only and return instantly.
+      // NOTE: this endpoint never triggers a sync/exec — it only persists.
+      const cur = (await server.getConfig()) || {};
+      const data = Object.assign({}, cur);
+      let cfgChanged = false;
+      if ("interval_minutes" in body) {
+        const v = Number(body.interval_minutes) || 0;
+        if (Number(cur.interval_minutes != null ? cur.interval_minutes : 5) !== v) { data.interval_minutes = v; cfgChanged = true; }
+      }
+      if ("apply" in body) {
+        const v = !!body.apply;
+        if ((cur.apply === true || cur.apply === "true") !== v) { data.apply = v; cfgChanged = true; }
+      }
+      if ("include_fleet" in body) {
+        const v = !!body.include_fleet;
+        if ((cur.include_fleet !== false && cur.include_fleet !== "false") !== v) { data.include_fleet = v; cfgChanged = true; }
+      }
+      if (cfgChanged) await server.call("admin:setPluginConfiguration", { short: SHORT, data });
+      json(res, 200, { ok: true, reloaded: cfgChanged });
     } catch (e) {
       json(res, 500, { error: String((e && e.message) || e) });
     }
