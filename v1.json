@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-08-26T10:00:00.000Z",
+  "updated_at": "2026-08-26T11:00:00.000Z",
   "plugins": [
     {
       "name": {
@@ -9,15 +9,15 @@
       },
       "short": "ufw-sync",
       "description": {
-        "zh_CN": "通过 admin:exec 把 UFW 白名单（机队 IP + DDNS 家庭出口）集中同步到每台 agent。Phase 1 为只读探测，不改动防火墙。",
-        "en": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Phase 1 is a read-only probe with no firewall changes."
+        "zh_CN": "通过 admin:exec 把 UFW 白名单（机队 IP + DDNS 家庭出口）集中同步到每台 agent；含节点选择 UI。默认 dry-run。",
+        "en": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec, with a node-selection UI. Dry-run by default."
       },
-      "version": "0.1.2",
+      "version": "0.3.0",
       "author": "lddcc",
       "komari": ">=1.4.0",
       "url": "https://github.com/lddcc/komari-ufw-sync",
-      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.1.2/ufw-sync-0.1.2.zip",
-      "sha256": "2e069b623902e8d42a1bb614c90f63fc8a8e672e6450d54ee1b6be638e4ed8c0"
+      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.3.0/ufw-sync-0.3.0.zip",
+      "sha256": "85ea909c9628a5a3491b029236bdf556eee37efa6a7d8b96d8688442be3d870f"
     }
   ]
 }

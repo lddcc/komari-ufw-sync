@@ -1,0 +1,179 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>UFW Sync</title>
+<style>
+  :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
+  body { font: 14px/1.5 -apple-system, "Segoe UI", Roboto, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 0; padding: 16px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { opacity: .7; margin: 0 0 14px; font-size: 12.5px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 12px; }
+  .spacer { flex: 1; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; cursor: pointer; }
+  button:hover { border-color: rgba(128,128,128,.8); }
+  button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
+  button.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(128,128,128,.18); white-space: nowrap; }
+  th { font-weight: 600; font-size: 12px; opacity: .75; }
+  td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 12px; }
+  .ok { background: rgba(22,163,74,.15); color: #16a34a; }
+  .warn { background: rgba(217,119,6,.15); color: #d97706; }
+  .muted { background: rgba(128,128,128,.15); opacity: .8; }
+  .row-off td:not(.selcol) { opacity: .45; }
+  #log { margin-top: 14px; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 10px 12px; max-height: 340px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
+  .toast { font-size: 12.5px; opacity: .8; }
+  .count { font-size: 12.5px; opacity: .8; }
+</style>
+</head>
+<body>
+  <h1>UFW Sync — 节点选择与执行</h1>
+  <p class="sub">勾选需要参与同步的节点。<b>Dry-run</b> 仅计算差异不改动；<b>应用</b> 才真正写入 ufw（fail-safe：空白名单/无 ufw 会自动跳过）。</p>
+
+  <div class="bar">
+    <button id="btnAll">全选</button>
+    <button id="btnInvert">反选</button>
+    <button id="btnReset">重置(全选)</button>
+    <span class="count" id="selCount"></span>
+    <span class="spacer"></span>
+    <button id="btnStatus">刷新状态</button>
+    <button id="btnDry" class="primary">Dry-run 选中</button>
+    <button id="btnApply" class="danger">应用 选中</button>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th class="selcol"><input type="checkbox" id="chkHead" title="全选/取消" /></th>
+        <th>节点</th>
+        <th>区域</th>
+        <th>ufw 状态</th>
+        <th class="num">已放行</th>
+        <th>上次结果</th>
+      </tr>
+    </thead>
+    <tbody id="rows"><tr><td colspan="6">加载中…</td></tr></tbody>
+  </table>
+
+  <div id="log" hidden></div>
+  <p class="toast" id="toast"></p>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const api = (p, opt) => fetch(p, Object.assign({ credentials: "same-origin", headers: { "Content-Type": "application/json" } }, opt)).then(r => r.json());
+let nodes = [];        // [{uuid,name,region}]
+let selected = new Set();
+
+function toast(m) { $("#toast").textContent = m || ""; }
+function logln(m) { const el = $("#log"); el.hidden = false; el.textContent += m + "\n"; el.scrollTop = el.scrollHeight; }
+function clearLog() { $("#log").textContent = ""; $("#log").hidden = true; }
+
+function ufwPill(s) {
+  if (!s) return '<span class="pill muted">—</span>';
+  if (s === "active") return '<span class="pill ok">active</span>';
+  if (s === "missing") return '<span class="pill muted">missing</span>';
+  return '<span class="pill warn">' + s + '</span>';
+}
+
+function render() {
+  const tb = $("#rows");
+  tb.innerHTML = "";
+  nodes.forEach(n => {
+    const tr = document.createElement("tr");
+    tr.className = selected.has(n.uuid) ? "" : "row-off";
+    tr.innerHTML =
+      '<td class="selcol"><input type="checkbox" data-u="' + n.uuid + '"' + (selected.has(n.uuid) ? " checked" : "") + '></td>' +
+      '<td>' + escapeHtml(n.name) + '</td>' +
+      '<td>' + escapeHtml(n.region || "") + '</td>' +
+      '<td data-ufw="' + n.uuid + '">' + ufwPill(n.ufw) + '</td>' +
+      '<td class="num" data-trusted="' + n.uuid + '">' + (n.trusted == null ? "" : n.trusted) + '</td>' +
+      '<td data-res="' + n.uuid + '">' + escapeHtml(n.lastResult || "") + '</td>';
+    tb.appendChild(tr);
+  });
+  tb.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener("change", onToggle));
+  updateCount();
+}
+function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+
+function updateCount() {
+  $("#selCount").textContent = "已选 " + selected.size + " / " + nodes.length;
+  $("#chkHead").checked = nodes.length > 0 && selected.size === nodes.length;
+  render.dirty && null;
+}
+function onToggle(e) {
+  const u = e.target.getAttribute("data-u");
+  if (e.target.checked) selected.add(u); else selected.delete(u);
+  e.target.closest("tr").className = e.target.checked ? "" : "row-off";
+  updateCount(); saveSelection();
+}
+
+function saveSelection() {
+  api("/ufw/api/selection", { method: "POST", body: JSON.stringify({ uuids: Array.from(selected) }) })
+    .then(() => toast("已保存选择")).catch(() => toast("保存失败"));
+}
+
+$("#btnAll").onclick = () => { selected = new Set(nodes.map(n => n.uuid)); render(); saveSelection(); };
+$("#btnInvert").onclick = () => { const s = new Set(); nodes.forEach(n => { if (!selected.has(n.uuid)) s.add(n.uuid); }); selected = s; render(); saveSelection(); };
+$("#btnReset").onclick = () => { selected = new Set(nodes.map(n => n.uuid)); render(); saveSelection(); toast("已重置为全选"); };
+$("#chkHead").onchange = (e) => { selected = e.target.checked ? new Set(nodes.map(n => n.uuid)) : new Set(); render(); saveSelection(); };
+
+$("#btnStatus").onclick = async () => {
+  toast("正在探测各节点状态…"); setBusy(true);
+  try {
+    const r = await api("/ufw/api/status", { method: "POST", body: "{}" });
+    (r.results || []).forEach(x => {
+      const n = nodes.find(n => n.uuid === x.uuid); if (!n) return;
+      n.ufw = x.ufw; n.trusted = x.trusted;
+      const c1 = document.querySelector('[data-ufw="' + x.uuid + '"]'); if (c1) c1.innerHTML = ufwPill(x.ufw);
+      const c2 = document.querySelector('[data-trusted="' + x.uuid + '"]'); if (c2) c2.textContent = x.trusted == null ? "" : x.trusted;
+    });
+    toast("状态已更新");
+  } catch (e) { toast("探测失败: " + e); } finally { setBusy(false); }
+};
+
+async function run(mode) {
+  if (selected.size === 0) { toast("未选择任何节点"); return; }
+  if (mode === "apply" && !confirm("将对选中的 " + selected.size + " 台节点真正写入 ufw 规则，确认？")) return;
+  clearLog(); setBusy(true); toast(mode === "apply" ? "正在应用…" : "正在 dry-run…");
+  logln("== " + (mode === "apply" ? "APPLY" : "DRY-RUN") + " on " + selected.size + " nodes ==");
+  try {
+    const r = await api("/ufw/api/run", { method: "POST", body: JSON.stringify({ mode, uuids: Array.from(selected) }) });
+    (r.results || []).forEach(x => {
+      logln("--- " + x.node + "  exit=" + x.exit_code + " ---");
+      logln(x.output || "");
+      const c = document.querySelector('[data-res="' + (findUuid(x.node)) + '"]');
+    });
+    // update lastResult summary column
+    (r.results || []).forEach(x => {
+      const n = nodes.find(n => n.name === x.node); if (!n) return;
+      const first = (x.output || "").split("\n").find(l => /MODE=|SKIP|no change|ERROR|applied/.test(l)) || ("exit=" + x.exit_code);
+      n.lastResult = first.replace(/^\[ufw-sync\]\s*/, "");
+      const c = document.querySelector('[data-res="' + n.uuid + '"]'); if (c) c.textContent = n.lastResult;
+    });
+    if (r.missing && r.missing.length) logln("(no response: " + r.missing.join(", ") + ")");
+    toast("完成");
+  } catch (e) { toast("执行失败: " + e); logln("ERROR " + e); } finally { setBusy(false); }
+}
+function findUuid(name){ const n = nodes.find(n=>n.name===name); return n?n.uuid:""; }
+$("#btnDry").onclick = () => run("check");
+$("#btnApply").onclick = () => run("apply");
+
+function setBusy(b) { ["btnStatus","btnDry","btnApply","btnAll","btnInvert","btnReset"].forEach(id => $("#"+id).disabled = b); }
+
+async function init() {
+  try {
+    const r = await api("/ufw/api/state");
+    nodes = r.nodes || [];
+    selected = new Set(r.selection == null ? nodes.map(n => n.uuid) : r.selection);
+    render();
+  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="6">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
+}
+init();
+</script>
+</body>
+</html>

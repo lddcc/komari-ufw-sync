@@ -1,105 +1,71 @@
 # komari-ufw-sync
 
 A [Komari](https://github.com/komari-monitor/komari) **server-side plugin** that
-centrally keeps a **UFW whitelist** in sync across every agent — fleet cross-allow
-IPs plus dynamic **home broadband exits resolved from DDNS** (IPv4 + IPv6 `/64`) —
-by pushing commands through Komari's `admin:exec`.
+centrally keeps a **UFW whitelist** in sync across every agent — fleet
+cross-allow IPs plus dynamic **home broadband exits resolved from DDNS**
+(IPv4 + IPv6 `/64`) — by shipping a small applier and running it via
+Komari's `admin:exec`.
 
-Instead of every server pulling a `curl | bash` script from a central HTTP host
-(a SPOF that fails silently when that host is down), the always-on Komari
-dashboard becomes the brain: it already knows every node and can run root
-commands on each agent.
+The always-on dashboard is the brain: it knows every node (and their
+authoritative public IPs) and can run root commands on each agent, so there is
+no separate `curl | bash` host to keep alive.
 
-## Status: Phase 1 — read-only probe
+## How it works
 
-This first version **does not change any firewall rule**. It only validates the
-plumbing end-to-end:
+1. **Whitelist** = fleet node IPs (from Komari `admin:getClient`, authoritative —
+   several nodes egress via a proxy so self-probing gives the wrong IP)
+   \+ static v4/v6 + home DDNS **names** (from config).
+2. The plugin base64-ships **`agent/ufw-sync.sh`** and runs it on the selected
+   nodes via `admin:exec`, passing the whitelist as env.
+3. The applier resolves DDNS **locally on each node**, diffs against its current
+   tagged rules, and (in apply mode) syncs `ufw allow from` + `ufw route allow
+   from` for each trusted source.
 
-1. `admin:listClients` → enumerate nodes
-2. `admin:exec` a **harmless** probe command (`hostname`, `id`, `ufw status | head -1`,
-   public v4/v6) on every node
-3. poll `admin:getTaskResultsByTaskId` → collect per-node `exit_code` + output
+### Safety
 
-Results are written to the plugin log and exposed at a manual test route.
+- **Dry-run by default.** Effective mode is `apply` only when you click **Apply**
+  in the UI, or turn on the `apply` config switch (used by the cron). Otherwise
+  `check` — it computes and prints the diff and changes nothing.
+- **Fail-safe applier:** refuses an empty whitelist (never locks you out), skips
+  hosts without ufw (never auto-installs), and only ever touches its own
+  `komari-ufw-sync`-tagged rules — never ufw defaults or public-port rules.
+- The manual routes are guarded (admin session, or `?token=` = `trigger_token`).
 
-### Why a phased rollout
+## Admin UI
 
-`admin:exec` runs as **root on every agent**. Before wiring that to `ufw`, we
-prove dispatch, task polling, per-node results, and offline-node behaviour with
-zero risk.
+Adds an admin page **UFW Sync** listing every node with its ufw status and
+trusted-rule count, plus checkboxes to choose which nodes to act on —
+**全选 / 反选 / 重置**, a **刷新状态** probe, and **Dry-run** / **应用** buttons.
+The selection is persisted; the cron acts on it too.
 
-## Roadmap
+## Configuration
 
-- **Phase 2** — ship a thin, idempotent, **fail-safe** `ufw-sync.sh` on each node.
-  The plugin computes each node's desired whitelist (fleet IPs from Komari +
-  home DDNS) and invokes the applier with it. The applier does a **diff** and
-  only touches rules on change; on empty/garbage input it **refuses to flush**
-  (never lock yourself out). `ufw` rules are persistent, so a dashboard outage
-  never drops existing rules.
-- **Phase 3** — per-host public-port policy (80/443/25…) + audit & close
-  accidentally world-exposed ports.
+| Key | Meaning |
+| --- | --- |
+| `apply` | Off = dry-run only. On = the cron enforces changes. |
+| `include_fleet` | Auto-add every Komari node's public v4/v6 to the whitelist. |
+| `ddns_v4` / `ddns_v6` | Home DDNS hostnames, resolved on each node (v6 → `/64`). |
+| `static_v4` / `static_v6` | Extra fixed addrs/CIDRs (LAN, tailnet, …). |
+| `trigger_token` | Token for anonymous `?token=` triggering (admins need none). |
 
-## Design notes / safety
+## Install
 
-- **No secrets in this repo.** The Komari API key lives in Komari, not here. The
-  plugin runs inside Komari and calls RPCs directly.
-- **Trust concentration.** A plugin that can `admin:exec` can root the whole
-  fleet — but that capability already exists (the dashboard's `/admin/exec`).
-  Harden the dashboard (2FA, restrict exec) accordingly.
-- **Coupling.** Firewall updates depend on the dashboard being up. Mitigated by
-  persistent `ufw` rules + fail-safe applier + Tailscale as an out-of-band path.
-
-## Install & test (Phase 1)
-
-### Option A — plugin source (recommended)
-
-Add this repo's catalog as a **plugin source** in Komari, then install/update
-from the UI (needs the repo to be **public** so Komari can fetch the release):
+Add this repo's catalog as a **plugin source** in Komari (repo is public):
 
 ```
 https://raw.githubusercontent.com/lddcc/komari-ufw-sync/main/v1.json
 ```
 
-### Option B — manual upload
-
-1. Zip the plugin (manifest + script at ZIP **root**, no nested folder):
-   ```bash
-   ./build.sh        # produces dist/ufw-sync-<version>.zip
-   ```
-2. Komari admin panel → **Plugins → Upload** the zip (or grab it from Releases).
-
-### Then
-
-3. It declares sensitive permissions (`allowSystemRPC`, `allowRoutes`) → approve.
-4. **Enable** the plugin (plugins default to disabled).
-5. Trigger a probe:
-   - **Manual:** `GET https://<your-komari>/exec-test` — plugin routes mount at
-     the **root** path (no prefix). Returns a JSON report.
-   - **Scheduled:** wait for the `@every 5m` cron and read **plugin logs**
-     (`日志` button, or `GET /api/admin/plugin/logs?short=ufw-sync`).
-
-Expected: each online node returns `exit=0` with its `host/user/ufw/ufwdocker/pubv4/pubv6`;
-offline / non-responsive agents show up under `missing` / `queued_offline` (or `exit_code: null`).
-
-### ⚠️ Securing the manual route
-
-`/exec-test` is served on the root engine **without Komari auth** — otherwise
-anyone could trigger a fleet-wide exec. The handler therefore allows only:
-
-- a **logged-in admin** (panel session), or
-- a request with `?token=<value>` matching **`trigger_token`** in the plugin's
-  configuration.
-
-Set `trigger_token` in the plugin config to enable `curl`/browser triggering:
-`https://<your-komari>/exec-test?token=<value>`. Leave it empty to allow only
-logged-in admins + the cron.
+or upload the release zip via **Plugins → Upload**. It declares sensitive
+permissions (`allowSystemRPC`, `allowRoutes`, `node`) → approve, then enable.
 
 ## Manifest permissions
 
 | Permission | Why |
 | --- | --- |
-| `allowSystemRPC` | call `admin:listClients` / `admin:exec` / `admin:getTaskResultsByTaskId` |
-| `allowRoutes` | expose `GET /exec-test` for manual runs |
+| `allowSystemRPC` | `admin:listClients` / `admin:getClient` / `admin:exec` / task results |
+| `allowRoutes` | UI + JSON endpoints (`/ufw/api/*`) |
+| `node` | `fs` — persist node selection under the plugin storage dir |
 
 ## References
 

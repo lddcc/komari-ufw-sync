@@ -1,29 +1,102 @@
 {
   "$schema": "https://raw.githubusercontent.com/komari-monitor/plugin-sdk/master/schema/komari-plugin.schema.json",
-  "name": "UFW Sync",
+  "name": {
+    "zh_CN": "UFW 同步",
+    "en": "UFW Sync"
+  },
   "short": "ufw-sync",
-  "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Phase 1 = read-only probe (no firewall changes).",
+  "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Default is check/dry-run; flip the 'apply' switch to enforce.",
   "author": "lddcc",
-  "version": "0.1.2",
+  "version": "0.3.0",
   "url": "https://github.com/lddcc/komari-ufw-sync",
   "komari": ">=1.4.0",
   "entry": "script.js",
   "permissions": {
     "allowSystemRPC": true,
     "allowRoutes": true,
-    "timeout": 60
+    "node": true,
+    "timeout": 120
   },
+  "pages": [
+    {
+      "file": "web/index.html",
+      "title": { "zh_CN": "UFW 同步", "en": "UFW Sync" },
+      "icon": "shield",
+      "type": "iframe",
+      "visibility": "admin"
+    }
+  ],
   "configuration": {
     "type": "managed",
     "data": [
+      {
+        "key": "apply",
+        "name": { "zh_CN": "启用下发（否则仅 dry-run）", "en": "Apply changes (else dry-run)" },
+        "type": "switch",
+        "default": false,
+        "help": {
+          "zh_CN": "关闭时只计算并打印每台的 diff，不改动防火墙。确认 dry-run 无误后再打开。",
+          "en": "When off, only compute and print each node's diff without changing firewalls. Turn on after reviewing the dry-run."
+        }
+      },
+      {
+        "key": "include_fleet",
+        "name": { "zh_CN": "自动放行机队各节点 IP", "en": "Auto-trust fleet node IPs" },
+        "type": "switch",
+        "default": true,
+        "help": {
+          "zh_CN": "自动把 Komari 已知的所有节点公网 v4/v6 加入白名单（节点间互信）。",
+          "en": "Add every Komari node's public v4/v6 to the whitelist (fleet cross-trust)."
+        }
+      },
+      {
+        "key": "ddns_v4",
+        "name": { "zh_CN": "家庭出口 DDNS (IPv4)", "en": "Home DDNS (IPv4)" },
+        "type": "string",
+        "default": "",
+        "help": {
+          "zh_CN": "空格/逗号分隔的主机名，各节点本地解析为 A 记录后放行。例：4hz.lddcc.cc 4ny.lddcc.cc",
+          "en": "Space/comma-separated hostnames, resolved locally on each node to A records. e.g. 4hz.lddcc.cc 4ny.lddcc.cc"
+        }
+      },
+      {
+        "key": "ddns_v6",
+        "name": { "zh_CN": "家庭出口 DDNS (IPv6)", "en": "Home DDNS (IPv6)" },
+        "type": "string",
+        "default": "",
+        "help": {
+          "zh_CN": "空格/逗号分隔的主机名，解析后掩为 /64 放行。例：6hz.lddcc.cc 6ny.lddcc.cc",
+          "en": "Space/comma-separated hostnames, resolved then masked to /64. e.g. 6hz.lddcc.cc 6ny.lddcc.cc"
+        }
+      },
+      {
+        "key": "static_v4",
+        "name": { "zh_CN": "静态白名单 (IPv4/CIDR)", "en": "Static whitelist (IPv4/CIDR)" },
+        "type": "string",
+        "default": "",
+        "help": {
+          "zh_CN": "额外固定放行的 v4 地址或网段，空格/逗号分隔。例：100.64.0.0/10 10.255.255.0/24 192.168.0.0/21",
+          "en": "Extra fixed v4 addrs/CIDRs, space/comma-separated. e.g. 100.64.0.0/10 10.255.255.0/24"
+        }
+      },
+      {
+        "key": "static_v6",
+        "name": { "zh_CN": "静态白名单 (IPv6/CIDR)", "en": "Static whitelist (IPv6/CIDR)" },
+        "type": "string",
+        "default": "",
+        "help": {
+          "zh_CN": "额外固定放行的 v6 地址或网段，空格/逗号分隔。",
+          "en": "Extra fixed v6 addrs/CIDRs, space/comma-separated."
+        }
+      },
       {
         "key": "trigger_token",
         "name": { "zh_CN": "手动触发令牌", "en": "Manual trigger token" },
         "type": "string",
         "default": "",
         "help": {
-          "zh_CN": "设置后可用 GET /exec-test?token=<此值> 手动触发。登录的管理员无需 token。留空则禁用匿名手动触发（仅 cron 与登录管理员可用）。",
-          "en": "When set, GET /exec-test?token=<value> triggers manually. Logged-in admins need no token. Empty disables anonymous manual triggering (cron + logged-in admins only)."
+          "zh_CN": "设置后可用 GET /sync?token=<此值> 手动触发。登录管理员无需 token。留空则禁用匿名手动触发。",
+          "en": "When set, GET /sync?token=<value> triggers manually. Logged-in admins need no token. Empty disables anonymous triggering."
         }
       }
     ]
