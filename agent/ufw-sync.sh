@@ -25,7 +25,7 @@
 #   - Incremental for trusted (add-new / delete-stale, no full-rebuild window).
 set -euo pipefail
 
-VER="0.7.3"                # bumped with the plugin; printed so we can see which applier is live
+VER="0.7.4"                # bumped with the plugin; printed so we can see which applier is live
 TAG_TRUST="komari-ufw-sync"
 TAG_PUB="komari-ufw-pub"
 TAG_TS="komari-ufw-ts"
@@ -91,12 +91,17 @@ for d in ${DDNS_V6:-}; do
     log "resolved $d -> $ip (/64 ${prefix}::/64)"; desired_v6+="${prefix}::/64"$'\n'
   else log "WARN: could not resolve v6 $d"; fi
 done
-desired_t=$(printf '%s\n%s' "$desired_v4" "$desired_v6" | sed '/^$/d' | sort -u)
+# Canonicalize host masks the way ufw stores them: it drops /32 on a single
+# IPv4 host and /128 on a single IPv6 host. Without this, "1.2.3.4/32" (desired)
+# never matches "1.2.3.4" (read back from ufw) → the rule churns every run.
+# Real networks (/24, /64, …) are left untouched.
+canon() { sed -E 's#/32$##; s#/128$##'; }
+desired_t=$(printf '%s\n%s' "$desired_v4" "$desired_v6" | canon | sed '/^$/d' | sort -u)
 
 if [[ -z "$desired_t" ]]; then
   log "trusted set EMPTY — skipping trusted class (not touching $TAG_TRUST rules)"
 else
-  current_t=$(ufw status 2>/dev/null | grep -F "$TAG_TRUST" | sed 's/#.*//' | awk '{print $NF}' | sed '/^$/d' | sort -u || true)
+  current_t=$(ufw status 2>/dev/null | grep -F "$TAG_TRUST" | sed 's/#.*//' | awk '{print $NF}' | canon | sed '/^$/d' | sort -u || true)
   add_t=$(comm -23 <(echo "$desired_t") <(echo "$current_t") || true)
   del_t=$(comm -13 <(echo "$desired_t") <(echo "$current_t") || true)
   if [[ -z "$add_t" && -z "$del_t" ]]; then
