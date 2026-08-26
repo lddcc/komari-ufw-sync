@@ -25,6 +25,7 @@
 #   - Incremental for trusted (add-new / delete-stale, no full-rebuild window).
 set -euo pipefail
 
+VER="0.7.2"                # bumped with the plugin; printed so we can see which applier is live
 TAG_TRUST="komari-ufw-sync"
 TAG_PUB="komari-ufw-pub"
 TAG_TS="komari-ufw-ts"
@@ -64,12 +65,13 @@ emit_status() {
   pcount=$(ufw status 2>/dev/null | grep -F "$TAG_PUB" | grep -oE '[0-9]+(:[0-9]+)?/(tcp|udp)' | sort -u | wc -l | tr -d ' ' || true)
   ts=$(ts_state)
   tsp=$(ts_ports | tr '\n' ',' | sed 's/,$//')
-  echo "[ufw-sync] STATUS ufw=$ufwstate trusted=${tcount:-0} pub=${pcount:-0} ufwdocker=$ufwd ts=$ts tsport=${tsp:-none}"
+  echo "[ufw-sync] STATUS ver=$VER ufw=$ufwstate trusted=${tcount:-0} pub=${pcount:-0} ufwdocker=$ufwd ts=$ts tsport=${tsp:-none}"
 }
 
+log "applier v$VER MODE=$MODE"
 if ! command -v ufw >/dev/null 2>&1; then
   log "SKIP: ufw not installed on this host"
-  echo "[ufw-sync] STATUS ufw=missing trusted=0 pub=0 ufwdocker=no"
+  echo "[ufw-sync] STATUS ver=$VER ufw=missing trusted=0 pub=0 ufwdocker=no ts=$(ts_state) tsport=none"
   exit 0
 fi
 

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-08-26T15:05:00.000Z",
+  "updated_at": "2026-08-26T15:20:00.000Z",
   "plugins": [
     {
       "name": {
@@ -12,12 +12,12 @@
         "zh_CN": "通过 admin:exec 把 UFW 可信白名单（机队 IP + DDNS 家庭出口）与每台节点的公共端口集中同步到每台 agent；含节点选择/列表式白名单/逐节点公共端口/ufw-docker 与 tailscale 状态 UI，状态持久化。可选动态放行 tailscale（WireGuard UDP 随机口）。默认 dry-run。",
         "en": "Centrally sync a UFW trusted whitelist (fleet IPs + DDNS home exits) and per-node public ports to every agent via admin:exec, with a node-selection / list-style whitelist / per-node public-port UI plus ufw-docker & tailscale status. Optionally auto-open tailscale's random WireGuard UDP port. Dry-run by default."
       },
-      "version": "0.7.1",
+      "version": "0.7.2",
       "author": "lddcc",
       "komari": ">=1.4.0",
       "url": "https://github.com/lddcc/komari-ufw-sync",
-      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.7.1/ufw-sync-0.7.1.zip",
-      "sha256": "327270197cc2980d55a65abd9fa3e9e9a7de6c7df07e05ca8792c3d48dfbbf72"
+      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.7.2/ufw-sync-0.7.2.zip",
+      "sha256": "806d5586ce4aadfaaa899c9d2f25d7fd0d3b58a6b98caca2a0fcf99e595f06c5"
     }
   ]
 }
