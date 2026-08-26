@@ -10,12 +10,12 @@ version=$(grep -oE '"version"[[:space:]]*:[[:space:]]*"[^"]+"' komari-plugin.jso
 out="dist/ufw-sync-${version}.zip"
 
 rm -rf build
-mkdir -p dist build/web
+mkdir -p dist build
 
 b64=$(base64 < agent/ufw-sync.sh | tr -d '\n')
 sed "s|__APPLIER_B64__|${b64}|" script.js > build/script.js
 cp komari-plugin.json build/komari-plugin.json
-cp web/index.html build/web/index.html
+cp -R web build/web
 
 rm -f "$out"
 ( cd build && zip -r "../$out" komari-plugin.json script.js web >/dev/null )

@@ -45,24 +45,7 @@
 </head>
 <body>
   <h1>UFW Sync — 节点选择与执行</h1>
-  <p class="sub">勾选参与同步的节点。<b>Dry-run</b> 仅计算差异不改动；<b>应用</b> 才写入 ufw（fail-safe：可信白名单为空/无 ufw 会自动跳过，绝不锁死）。可信白名单对来源全放行；公共端口按节点单独开放给全网（host + docker）。</p>
-
-  <details id="settings" open>
-    <summary>设置 — 可信白名单（列表）/ 频率</summary>
-    <div class="grid">
-      <div class="field"><div class="flab">家庭 DDNS (IPv4) — 本地解析为 A 记录</div><div class="listwrap" id="ddns_v4"></div><button class="mini" data-add="ddns_v4">+ 添加</button></div>
-      <div class="field"><div class="flab">家庭 DDNS (IPv6) — 解析后掩为 /64</div><div class="listwrap" id="ddns_v6"></div><button class="mini" data-add="ddns_v6">+ 添加</button></div>
-      <div class="field"><div class="flab">静态白名单 (IPv4 / CIDR)</div><div class="listwrap" id="static_v4"></div><button class="mini" data-add="static_v4">+ 添加</button></div>
-      <div class="field"><div class="flab">静态白名单 (IPv6 / CIDR)</div><div class="listwrap" id="static_v6"></div><button class="mini" data-add="static_v6">+ 添加</button></div>
-    </div>
-    <div class="switches">
-      <label>自动同步间隔（分钟，0=关闭）<input id="interval_minutes" type="number" min="0" step="1" /></label>
-      <label><input id="include_fleet" type="checkbox" /> 自动放行机队各节点 IP</label>
-      <label><input id="apply" type="checkbox" /> 启用定时自动下发（apply）</label>
-    </div>
-    <button id="btnSaveCfg" class="primary">保存设置</button>
-    <span class="toast" id="cfgToast"></span>
-  </details>
+  <p class="sub">勾选参与同步的节点。<b>Dry-run</b> 仅计算差异不改动；<b>应用</b> 才写入 ufw（fail-safe：可信白名单为空/无 ufw 会自动跳过，绝不锁死）。可信白名单对来源全放行；公共端口按节点单独开放给全网（host + docker）。<b>可信白名单 / 频率</b>在「UFW 配置」页设置。</p>
 
   <div class="bar">
     <button id="btnAll">全选</button>
@@ -106,33 +89,6 @@ function toast(m) { $("#toast").textContent = m || ""; }
 function logln(m) { const el = $("#log"); el.hidden = false; el.textContent += m + "\n"; el.scrollTop = el.scrollHeight; }
 function clearLog() { $("#log").textContent = ""; $("#log").hidden = true; }
 function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
-
-/* ---------- list editors (add/remove rows, no defaults/placeholders) ------- */
-function addListRow(id, value) {
-  const wrap = document.getElementById(id);
-  const row = document.createElement("div");
-  row.className = "lrow";
-  const inp = document.createElement("input");
-  inp.type = "text"; inp.value = value || ""; inp.spellcheck = false;
-  const del = document.createElement("button");
-  del.className = "mini"; del.textContent = "×"; del.title = "删除";
-  del.addEventListener("click", () => row.remove());
-  row.appendChild(inp); row.appendChild(del);
-  wrap.appendChild(row);
-  return inp;
-}
-function setList(id, values) {
-  const wrap = document.getElementById(id);
-  wrap.innerHTML = "";
-  (values || []).forEach(v => addListRow(id, v));
-}
-function collectList(id) {
-  return Array.from(document.getElementById(id).querySelectorAll("input"))
-    .map(i => i.value.trim()).filter(Boolean);
-}
-document.querySelectorAll("button[data-add]").forEach(b => {
-  b.addEventListener("click", () => { const inp = addListRow(b.getAttribute("data-add"), ""); inp.focus(); });
-});
 
 /* ---------- node table ---------------------------------------------------- */
 function ufwPill(s) {
@@ -238,34 +194,7 @@ $("#btnApply").onclick = () => run("apply");
 
 function setBusy(b) { ["btnStatus","btnDry","btnApply","btnAll","btnInvert","btnReset"].forEach(id => $("#"+id).disabled = b); }
 
-async function loadConfig() {
-  try {
-    const c = await api("/ufw/api/config");
-    setList("ddns_v4", c.ddns_v4); setList("ddns_v6", c.ddns_v6);
-    setList("static_v4", c.static_v4); setList("static_v6", c.static_v6);
-    $("#interval_minutes").value = c.interval_minutes == null ? 5 : c.interval_minutes;
-    $("#include_fleet").checked = c.include_fleet !== false;
-    $("#apply").checked = c.apply === true;
-  } catch (e) { $("#cfgToast").textContent = "配置加载失败: " + e; }
-}
-$("#btnSaveCfg").onclick = async () => {
-  const body = {
-    ddns_v4: collectList("ddns_v4"), ddns_v6: collectList("ddns_v6"),
-    static_v4: collectList("static_v4"), static_v6: collectList("static_v6"),
-    interval_minutes: Number($("#interval_minutes").value) || 0,
-    include_fleet: $("#include_fleet").checked,
-    apply: $("#apply").checked,
-  };
-  $("#cfgToast").textContent = "保存中…"; $("#btnSaveCfg").disabled = true;
-  try {
-    const r = await api("/ufw/api/config", { method: "POST", body: JSON.stringify(body) });
-    $("#cfgToast").textContent = r.ok ? "已保存" : ("保存失败: " + (r.error || ""));
-  } catch (e) { $("#cfgToast").textContent = "保存失败: " + e; }
-  finally { $("#btnSaveCfg").disabled = false; }
-};
-
 async function init() {
-  loadConfig();
   try {
     const r = await api("/ufw/api/state");
     nodes = r.nodes || [];
