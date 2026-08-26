@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-08-26T14:10:00.000Z",
+  "updated_at": "2026-08-26T14:40:00.000Z",
   "plugins": [
     {
       "name": {
@@ -9,15 +9,15 @@
       },
       "short": "ufw-sync",
       "description": {
-        "zh_CN": "通过 admin:exec 把 UFW 可信白名单（机队 IP + DDNS 家庭出口）与每台节点的公共端口集中同步到每台 agent；含节点选择/列表式白名单/逐节点公共端口 UI。默认 dry-run。",
+        "zh_CN": "通过 admin:exec 把 UFW 可信白名单（机队 IP + DDNS 家庭出口）与每台节点的公共端口集中同步到每台 agent；含节点选择/列表式白名单/逐节点公共端口/ufw-docker 状态 UI，状态持久化。默认 dry-run。",
         "en": "Centrally sync a UFW trusted whitelist (fleet IPs + DDNS home exits) and per-node public ports to every agent via admin:exec, with a node-selection / list-style whitelist / per-node public-port UI. Dry-run by default."
       },
-      "version": "0.5.3",
+      "version": "0.6.0",
       "author": "lddcc",
       "komari": ">=1.4.0",
       "url": "https://github.com/lddcc/komari-ufw-sync",
-      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.5.3/ufw-sync-0.5.3.zip",
-      "sha256": "dd8f8d83a7ce463d4655b95fec8539af39fa4d9c33c7b1055aa8c4d13edf3624"
+      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.6.0/ufw-sync-0.6.0.zip",
+      "sha256": "c62e44f3b4c0b055db5e5589ecdfce816d52edc7b89bd2ab2849471482e37649"
     }
   ]
 }

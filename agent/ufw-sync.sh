@@ -31,8 +31,21 @@ changed=0
 log() { echo "[ufw-sync] $*"; }
 split() { echo "$1" | tr ',' ' ' | tr -s ' ' '\n' | sed '/^$/d'; }
 
+# Machine-readable status line the brain parses & persists. Always printed last
+# so every check/apply also refreshes the stored status.
+emit_status() {
+  local ufwstate ufwd tcount pcount
+  ufwstate=$(ufw status 2>/dev/null | head -1 | sed 's/^Status: //')
+  [[ -z "$ufwstate" ]] && ufwstate=unknown
+  if grep -qs "BEGIN UFW AND DOCKER" /etc/ufw/after.rules; then ufwd=yes; else ufwd=no; fi
+  tcount=$(ufw status 2>/dev/null | grep -c "$TAG_TRUST" || true)
+  pcount=$(ufw status 2>/dev/null | grep -F "$TAG_PUB" | grep -oE '[0-9]+(:[0-9]+)?/(tcp|udp)' | sort -u | wc -l | tr -d ' ' || true)
+  echo "[ufw-sync] STATUS ufw=$ufwstate trusted=${tcount:-0} pub=${pcount:-0} ufwdocker=$ufwd"
+}
+
 if ! command -v ufw >/dev/null 2>&1; then
   log "SKIP: ufw not installed on this host"
+  echo "[ufw-sync] STATUS ufw=missing trusted=0 pub=0 ufwdocker=no"
   exit 0
 fi
 
@@ -123,6 +136,7 @@ fi
 # ===================== finalize =============================================
 if [[ "$MODE" != "apply" ]]; then
   log "check mode: no changes applied"
+  emit_status
   exit 0
 fi
 if [[ "$changed" == "1" ]]; then
@@ -131,3 +145,4 @@ if [[ "$changed" == "1" ]]; then
 else
   log "nothing to apply"
 fi
+emit_status

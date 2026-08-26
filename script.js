@@ -35,10 +35,13 @@ const TS_FILE = STORE + "/laststate.json";
 const WL_FILE = STORE + "/whitelist.json";
 const PUB_FILE = STORE + "/pubports.json";
 const SET_FILE = STORE + "/settings.json";
+const STATUS_FILE = STORE + "/laststatus.json";
 
-// Read-only status probe: ufw state + counts of each of our tagged rule sets.
+// Read-only status probe: ufw state, ufw-docker integration, and counts of each
+// of our tagged rule sets.
 const STATUS_CMD = [
   'echo ufw=$(command -v ufw >/dev/null 2>&1 && (ufw status 2>/dev/null | head -1 | sed "s/^Status: //") || echo missing)',
+  'echo ufwdocker=$(grep -qs "BEGIN UFW AND DOCKER" /etc/ufw/after.rules && echo yes || echo no)',
   "echo trusted=$(ufw status 2>/dev/null | grep -c komari-ufw-sync)",
   "echo pub=$(ufw status 2>/dev/null | grep -F komari-ufw-pub | grep -oE '[0-9]+(:[0-9]+)?/(tcp|udp)' | sort -u | wc -l)",
 ].join("; ");
@@ -148,6 +151,26 @@ function setNodePub(uuid, tcp, udp) {
   if (t.length === 0 && u.length === 0) delete map[uuid];
   else map[uuid] = { tcp: t, udp: u };
   return savePub(map);
+}
+
+// last-known per-node status: { <uuid>: { ufw, ufwdocker, trusted, pub, ts } }
+function loadStatus() {
+  return readJson(STATUS_FILE, {}) || {};
+}
+function mergeStatus(entries) {
+  const map = loadStatus();
+  (entries || []).forEach((e) => {
+    if (!e || !e.uuid) return;
+    map[e.uuid] = {
+      ufw: e.ufw != null ? e.ufw : (map[e.uuid] || {}).ufw || null,
+      ufwdocker: e.ufwdocker != null ? e.ufwdocker : (map[e.uuid] || {}).ufwdocker || null,
+      trusted: e.trusted != null ? e.trusted : (map[e.uuid] || {}).trusted,
+      pub: e.pub != null ? e.pub : (map[e.uuid] || {}).pub,
+      ts: e.ts || Date.now(),
+    };
+  });
+  writeJson(STATUS_FILE, map);
+  return map;
 }
 
 /** Guard for root-mounted plugin routes (no Komari auth on them). */
@@ -274,17 +297,20 @@ async function syncAll(mode, uuids) {
   );
 
   const done = await pollMany(tasks);
+  const statusEntries = [];
   const results = tasks.map((t) => {
     const r = t.task_id ? done[t.task_id] : null;
-    return {
-      node: t.node,
-      exit_code: r ? r.exit_code : null,
-      output: r ? String(r.result || "").trim() : (t.err || "no result"),
-    };
+    const output = r ? String(r.result || "").trim() : (t.err || "no result");
+    if (r) {
+      const st = parseStatusLine(output);
+      if (st) statusEntries.push(Object.assign({ uuid: t.uuid }, st));
+    }
+    return { uuid: t.uuid, node: t.node, exit_code: r ? r.exit_code : null, output };
   });
   results.forEach((r) =>
     console.log(`[ufw-sync] ${r.node} exit=${r.exit_code} :: ${String(r.output).replace(/\n/g, " | ")}`)
   );
+  const statusMap = mergeStatus(statusEntries); // persist refreshed status
   const missing = results.filter((r) => r.exit_code == null).map((r) => r.node);
   return {
     mode,
@@ -293,6 +319,7 @@ async function syncAll(mode, uuids) {
     returned: results.filter((r) => r.exit_code != null).length,
     missing,
     results,
+    status: target.map((n) => Object.assign({ uuid: n.uuid, node: n.name }, statusMap[n.uuid] || {})),
   };
 }
 
@@ -323,12 +350,29 @@ async function statusAll(uuids) {
       uuid: r.client,
       node: nameByUuid[r.client] || r.client,
       ufw: kv.ufw || null,
+      ufwdocker: kv.ufwdocker || null,
       trusted: kv.trusted != null && kv.trusted !== "" ? Number(kv.trusted) : null,
       pub: kv.pub != null && kv.pub !== "" ? Number(kv.pub) : null,
       exit_code: r.exit_code,
     };
   });
+  mergeStatus(out); // persist so the page shows it immediately next load
   return { results: out };
+}
+
+// Parse a "[ufw-sync] STATUS ufw=.. ufwdocker=.. trusted=.. pub=.." line the
+// applier prints at the end of every check/apply run.
+function parseStatusLine(output) {
+  const line = String(output || "").split("\n").find((l) => l.indexOf("STATUS ") !== -1);
+  if (!line) return null;
+  const kv = {};
+  line.replace(/(\w+)=(\S+)/g, (_, k, v) => { kv[k] = v; return ""; });
+  return {
+    ufw: kv.ufw || null,
+    ufwdocker: kv.ufwdocker || null,
+    trusted: kv.trusted != null && kv.trusted !== "" ? Number(kv.trusted) : null,
+    pub: kv.pub != null && kv.pub !== "" ? Number(kv.pub) : null,
+  };
 }
 
 function json(res, code, obj) {
@@ -354,7 +398,7 @@ function load() {
     if (!(await guard(req, res))) return;
     try {
       const nodes = await listClients();
-      json(res, 200, { nodes, selection: loadSelection(), pub: loadPub() });
+      json(res, 200, { nodes, selection: loadSelection(), pub: loadPub(), status: loadStatus() });
     } catch (e) {
       json(res, 500, { error: String((e && e.message) || e) });
     }

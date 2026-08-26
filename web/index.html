@@ -65,13 +65,15 @@
         <th>节点</th>
         <th>区域</th>
         <th>ufw 状态</th>
+        <th>ufw-docker</th>
         <th class="num">已放行</th>
+        <th class="num">公共</th>
         <th>公共端口 TCP</th>
         <th>公共端口 UDP</th>
         <th>上次结果</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="8">加载中…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="10">加载中…</td></tr></tbody>
   </table>
   <p class="sub" style="margin-top:8px">公共端口示例：<code>80,443,8000:8100</code>（逗号分隔，支持端口段）。改动后自动保存，下次同步生效。</p>
 
@@ -97,8 +99,26 @@ function ufwPill(s) {
   if (s === "missing") return '<span class="pill muted">missing</span>';
   return '<span class="pill warn">' + s + '</span>';
 }
+function dockerPill(s) {
+  if (s == null) return '<span class="pill muted">—</span>';
+  if (s === "yes") return '<span class="pill ok">集成</span>';
+  if (s === "no") return '<span class="pill warn">未集成</span>';
+  return '<span class="pill muted">' + escapeHtml(s) + '</span>';
+}
 function pubStr(uuid, proto) {
   const p = pub[uuid]; return p && p[proto] ? p[proto].join(",") : "";
+}
+// merge a status object {ufw,ufwdocker,trusted,pub} into a node + refresh cells
+function applyStatus(uuid, x) {
+  const n = nodes.find(n => n.uuid === uuid); if (!n || !x) return;
+  if (x.ufw !== undefined) n.ufw = x.ufw;
+  if (x.ufwdocker !== undefined) n.ufwdocker = x.ufwdocker;
+  if (x.trusted !== undefined) n.trusted = x.trusted;
+  if (x.pub !== undefined) n.pubCount = x.pub;
+  const c1 = document.querySelector('[data-ufw="' + uuid + '"]'); if (c1) c1.innerHTML = ufwPill(n.ufw);
+  const c2 = document.querySelector('[data-ufwd="' + uuid + '"]'); if (c2) c2.innerHTML = dockerPill(n.ufwdocker);
+  const c3 = document.querySelector('[data-trusted="' + uuid + '"]'); if (c3) c3.textContent = n.trusted == null ? "" : n.trusted;
+  const c4 = document.querySelector('[data-pubcnt="' + uuid + '"]'); if (c4) c4.textContent = n.pubCount == null ? "" : n.pubCount;
 }
 
 function render() {
@@ -112,7 +132,9 @@ function render() {
       '<td>' + escapeHtml(n.name) + '</td>' +
       '<td>' + escapeHtml(n.region || "") + '</td>' +
       '<td data-ufw="' + n.uuid + '">' + ufwPill(n.ufw) + '</td>' +
+      '<td data-ufwd="' + n.uuid + '">' + dockerPill(n.ufwdocker) + '</td>' +
       '<td class="num" data-trusted="' + n.uuid + '">' + (n.trusted == null ? "" : n.trusted) + '</td>' +
+      '<td class="num" data-pubcnt="' + n.uuid + '">' + (n.pubCount == null ? "" : n.pubCount) + '</td>' +
       '<td><input class="portin" data-pub-tcp="' + n.uuid + '" value="' + escapeHtml(pubStr(n.uuid,"tcp")) + '" placeholder=""></td>' +
       '<td><input class="portin" data-pub-udp="' + n.uuid + '" value="' + escapeHtml(pubStr(n.uuid,"udp")) + '" placeholder=""></td>' +
       '<td data-res="' + n.uuid + '">' + escapeHtml(n.lastResult || "") + '</td>';
@@ -158,12 +180,7 @@ $("#btnStatus").onclick = async () => {
   toast("正在探测各节点状态…"); setBusy(true);
   try {
     const r = await api("/ufw/api/status", { method: "POST", body: "{}" });
-    (r.results || []).forEach(x => {
-      const n = nodes.find(n => n.uuid === x.uuid); if (!n) return;
-      n.ufw = x.ufw; n.trusted = x.trusted;
-      const c1 = document.querySelector('[data-ufw="' + x.uuid + '"]'); if (c1) c1.innerHTML = ufwPill(x.ufw);
-      const c2 = document.querySelector('[data-trusted="' + x.uuid + '"]'); if (c2) c2.textContent = x.trusted == null ? "" : x.trusted;
-    });
+    (r.results || []).forEach(x => applyStatus(x.uuid, x));
     toast("状态已更新");
   } catch (e) { toast("探测失败: " + e); } finally { setBusy(false); }
 };
@@ -178,13 +195,13 @@ async function run(mode) {
     (r.results || []).forEach(x => {
       logln("--- " + x.node + "  exit=" + x.exit_code + " ---");
       logln(x.output || "");
-    });
-    (r.results || []).forEach(x => {
-      const n = nodes.find(n => n.name === x.node); if (!n) return;
+      const n = nodes.find(n => n.uuid === x.uuid) || nodes.find(n => n.name === x.node); if (!n) return;
       const first = (x.output || "").split("\n").find(l => /MODE=|SKIP|no change|ERROR|applied|pub/.test(l)) || ("exit=" + x.exit_code);
       n.lastResult = first.replace(/^\[ufw-sync\]\s*/, "");
       const c = document.querySelector('[data-res="' + n.uuid + '"]'); if (c) c.textContent = n.lastResult;
     });
+    // sync also refreshes status (parsed from each node's STATUS line)
+    (r.status || []).forEach(x => applyStatus(x.uuid, x));
     if (r.missing && r.missing.length) logln("(no response: " + r.missing.join(", ") + ")");
     toast("完成");
   } catch (e) { toast("执行失败: " + e); logln("ERROR " + e); } finally { setBusy(false); }
@@ -199,9 +216,14 @@ async function init() {
     const r = await api("/ufw/api/state");
     nodes = r.nodes || [];
     pub = r.pub || {};
+    const status = r.status || {};   // persisted last-known status per uuid
+    nodes.forEach(n => {
+      const s = status[n.uuid]; if (!s) return;
+      n.ufw = s.ufw; n.ufwdocker = s.ufwdocker; n.trusted = s.trusted; n.pubCount = s.pub;
+    });
     selected = new Set(r.selection == null ? nodes.map(n => n.uuid) : r.selection);
     render();
-  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="8">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
+  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="10">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
 }
 init();
 </script>
