@@ -13,6 +13,8 @@
 #   DDNS_V6     hostnames -> resolved locally, masked to /64
 #   PUBLIC_TCP  public tcp ports/ranges, e.g. "80,443,8000:8100"
 #   PUBLIC_UDP  public udp ports/ranges
+#   MANAGE_TS   1 -> auto-open tailscaled's current (random) WireGuard UDP port
+#               tagged komari-ufw-ts; 0/unset -> remove those tagged rules.
 #
 # Guarantees:
 #   - No ufw installed      -> print SKIP, exit 0 (never auto-installs).
@@ -25,6 +27,7 @@ set -euo pipefail
 
 TAG_TRUST="komari-ufw-sync"
 TAG_PUB="komari-ufw-pub"
+TAG_TS="komari-ufw-ts"
 MODE="${MODE:-check}"
 changed=0
 
@@ -33,14 +36,28 @@ split() { echo "$1" | tr ',' ' ' | tr -s ' ' '\n' | sed '/^$/d'; }
 
 # Machine-readable status line the brain parses & persists. Always printed last
 # so every check/apply also refreshes the stored status.
+# current tailscaled WireGuard UDP port(s) (random on many builds; may drift)
+ts_ports() { ss -ulnpH 2>/dev/null | awk '/tailscaled/{print $5}' | sed 's/.*://' | sort -un; }
+# tailscale daemon state: up (running) / down (installed, not running) / none
+ts_state() {
+  if pgrep -x tailscaled >/dev/null 2>&1; then echo up
+  elif command -v tailscale >/dev/null 2>&1 || [ -e /usr/sbin/tailscaled ] || [ -e /usr/bin/tailscaled ]; then echo down
+  else echo none; fi
+}
+
 emit_status() {
-  local ufwstate ufwd tcount pcount
+  # terminal (runs right before exit): disable errexit/pipefail so a SIGPIPE
+  # from a `... | head -1` pipe can never abort the final status line.
+  set +e +o pipefail
+  local ufwstate ufwd tcount pcount ts tsp
   ufwstate=$(ufw status 2>/dev/null | head -1 | sed 's/^Status: //')
   [[ -z "$ufwstate" ]] && ufwstate=unknown
   if grep -qs "BEGIN UFW AND DOCKER" /etc/ufw/after.rules; then ufwd=yes; else ufwd=no; fi
   tcount=$(ufw status 2>/dev/null | grep -c "$TAG_TRUST" || true)
   pcount=$(ufw status 2>/dev/null | grep -F "$TAG_PUB" | grep -oE '[0-9]+(:[0-9]+)?/(tcp|udp)' | sort -u | wc -l | tr -d ' ' || true)
-  echo "[ufw-sync] STATUS ufw=$ufwstate trusted=${tcount:-0} pub=${pcount:-0} ufwdocker=$ufwd"
+  ts=$(ts_state)
+  tsp=$(ts_ports | tr '\n' ',' | sed 's/,$//')
+  echo "[ufw-sync] STATUS ufw=$ufwstate trusted=${tcount:-0} pub=${pcount:-0} ufwdocker=$ufwd ts=$ts tsport=${tsp:-none}"
 }
 
 if ! command -v ufw >/dev/null 2>&1; then
@@ -130,6 +147,37 @@ else
       ufw allow "$port/$proto" comment "$TAG_PUB" >/dev/null
       ufw route allow proto "$proto" from any to any port "$port" comment "$TAG_PUB" >/dev/null
     done <<< "$desired_p"
+  fi
+fi
+
+# ===================== tailscale wireguard udp (komari-ufw-ts) ===============
+# tailscaled binds a RANDOM inbound UDP port (drifts across restarts). When
+# MANAGE_TS=1 we open whatever port(s) it currently listens on so WireGuard runs
+# direct instead of falling back to the DERP relay. The plugin's periodic sync
+# re-runs this, so a drifted port is re-opened within one interval.
+# MANAGE_TS!=1 -> desired empty -> our tagged rules are removed (toggle-off closes).
+if [[ "${MANAGE_TS:-0}" == "1" ]]; then
+  desired_ts=$(ts_ports | sed '/^$/d' | sort -un || true)
+else
+  desired_ts=""
+fi
+current_ts=$(ufw status 2>/dev/null | grep -F "$TAG_TS" | sed 's/#.*//' \
+  | grep -oE '[0-9]+/udp' | grep -oE '^[0-9]+' | sort -un || true)
+
+if [[ "$desired_ts" == "$current_ts" ]]; then
+  [[ -n "$desired_ts" || -n "$current_ts" ]] && log "tailscale: no change ($(echo "$desired_ts"|sed '/^$/d'|wc -l|tr -d ' ') port)"
+else
+  changed=1
+  log "tailscale MODE=$MODE manage=${MANAGE_TS:-0} desired=[$(echo "$desired_ts"|tr '\n' ' ')] current=[$(echo "$current_ts"|tr '\n' ' ')]"
+  if [[ "$MODE" == "apply" ]]; then
+    while :; do
+      num=$(ufw status numbered 2>/dev/null | grep -F "$TAG_TS" | sed -n 's/^\[[[:space:]]*\([0-9][0-9]*\)\].*/\1/p' | sort -rn | head -1 || true)
+      [[ -z "$num" ]] && break
+      ufw --force delete "$num" >/dev/null || break
+    done
+    while IFS= read -r p; do [[ -z "$p" ]] && continue
+      ufw allow "$p/udp" comment "$TAG_TS" >/dev/null
+    done <<< "$desired_ts"
   fi
 fi
 

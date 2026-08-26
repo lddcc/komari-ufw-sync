@@ -66,6 +66,7 @@
         <th>区域</th>
         <th>ufw 状态</th>
         <th>ufw-docker</th>
+        <th>tailscale</th>
         <th class="num">已放行</th>
         <th class="num">公共</th>
         <th>公共端口 TCP</th>
@@ -73,7 +74,7 @@
         <th>上次结果</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="10">加载中…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="11">加载中…</td></tr></tbody>
   </table>
   <p class="sub" style="margin-top:8px">公共端口示例：<code>80,443,8000:8100</code>（逗号分隔，支持端口段）。改动后自动保存，下次同步生效。</p>
 
@@ -105,18 +106,29 @@ function dockerPill(s) {
   if (s === "no") return '<span class="pill warn">未集成</span>';
   return '<span class="pill muted">' + escapeHtml(s) + '</span>';
 }
+function tsPill(s, port) {
+  if (s == null || s === "") return '<span class="pill muted">—</span>';
+  const p = port && port !== "none" ? ' <span style="opacity:.7">:' + escapeHtml(port) + '</span>' : "";
+  if (s === "up") return '<span class="pill ok">up</span>' + p;
+  if (s === "down") return '<span class="pill warn">down</span>';
+  if (s === "none") return '<span class="pill muted">未安装</span>';
+  return '<span class="pill muted">' + escapeHtml(s) + '</span>';
+}
 function pubStr(uuid, proto) {
   const p = pub[uuid]; return p && p[proto] ? p[proto].join(",") : "";
 }
-// merge a status object {ufw,ufwdocker,trusted,pub} into a node + refresh cells
+// merge a status object {ufw,ufwdocker,trusted,pub,tailscale,tsport} into a node + refresh cells
 function applyStatus(uuid, x) {
   const n = nodes.find(n => n.uuid === uuid); if (!n || !x) return;
   if (x.ufw !== undefined) n.ufw = x.ufw;
   if (x.ufwdocker !== undefined) n.ufwdocker = x.ufwdocker;
   if (x.trusted !== undefined) n.trusted = x.trusted;
   if (x.pub !== undefined) n.pubCount = x.pub;
+  if (x.tailscale !== undefined) n.tailscale = x.tailscale;
+  if (x.tsport !== undefined) n.tsport = x.tsport;
   const c1 = document.querySelector('[data-ufw="' + uuid + '"]'); if (c1) c1.innerHTML = ufwPill(n.ufw);
   const c2 = document.querySelector('[data-ufwd="' + uuid + '"]'); if (c2) c2.innerHTML = dockerPill(n.ufwdocker);
+  const cts = document.querySelector('[data-ts="' + uuid + '"]'); if (cts) cts.innerHTML = tsPill(n.tailscale, n.tsport);
   const c3 = document.querySelector('[data-trusted="' + uuid + '"]'); if (c3) c3.textContent = n.trusted == null ? "" : n.trusted;
   const c4 = document.querySelector('[data-pubcnt="' + uuid + '"]'); if (c4) c4.textContent = n.pubCount == null ? "" : n.pubCount;
 }
@@ -133,6 +145,7 @@ function render() {
       '<td>' + escapeHtml(n.region || "") + '</td>' +
       '<td data-ufw="' + n.uuid + '">' + ufwPill(n.ufw) + '</td>' +
       '<td data-ufwd="' + n.uuid + '">' + dockerPill(n.ufwdocker) + '</td>' +
+      '<td data-ts="' + n.uuid + '">' + tsPill(n.tailscale, n.tsport) + '</td>' +
       '<td class="num" data-trusted="' + n.uuid + '">' + (n.trusted == null ? "" : n.trusted) + '</td>' +
       '<td class="num" data-pubcnt="' + n.uuid + '">' + (n.pubCount == null ? "" : n.pubCount) + '</td>' +
       '<td><input class="portin" data-pub-tcp="' + n.uuid + '" value="' + escapeHtml(pubStr(n.uuid,"tcp")) + '" placeholder=""></td>' +
@@ -220,10 +233,11 @@ async function init() {
     nodes.forEach(n => {
       const s = status[n.uuid]; if (!s) return;
       n.ufw = s.ufw; n.ufwdocker = s.ufwdocker; n.trusted = s.trusted; n.pubCount = s.pub;
+      n.tailscale = s.tailscale; n.tsport = s.tsport;
     });
     selected = new Set(r.selection == null ? nodes.map(n => n.uuid) : r.selection);
     render();
-  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="10">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
+  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="11">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
 }
 init();
 </script>

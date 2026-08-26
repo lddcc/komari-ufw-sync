@@ -50,7 +50,9 @@
       <label>自动同步间隔（分钟，0=关闭）<input id="interval_minutes" type="number" min="0" step="1" /></label>
       <label><input id="include_fleet" type="checkbox" /> 自动放行机队各节点 IP</label>
       <label><input id="apply" type="checkbox" /> 启用定时自动下发（apply）</label>
+      <label><input id="manage_tailscale" type="checkbox" /> 动态放行 tailscale 端口（WireGuard UDP，随机口自动跟随）</label>
     </div>
+    <p class="sub" style="margin:8px 0 0">开启后，每次<b>应用</b>会探测 tailscaled 当前监听的（随机）UDP 端口并放行（标签 <code>komari-ufw-ts</code>），端口漂移时下次同步自动更新；关闭则清除该标签规则。仅在 apply 生效。</p>
   </div>
 
   <div class="actions">
@@ -96,6 +98,7 @@ async function loadConfig() {
     $("#interval_minutes").value = c.interval_minutes == null ? 5 : c.interval_minutes;
     $("#include_fleet").checked = c.include_fleet !== false;
     $("#apply").checked = c.apply === true;
+    $("#manage_tailscale").checked = c.manage_tailscale === true;
   } catch (e) { $("#cfgToast").textContent = "配置加载失败: " + e; }
 }
 $("#btnSaveCfg").onclick = async () => {
@@ -105,6 +108,7 @@ $("#btnSaveCfg").onclick = async () => {
     interval_minutes: Number($("#interval_minutes").value) || 0,
     include_fleet: $("#include_fleet").checked,
     apply: $("#apply").checked,
+    manage_tailscale: $("#manage_tailscale").checked,
   };
   $("#cfgToast").textContent = "保存中…"; $("#btnSaveCfg").disabled = true;
   try {

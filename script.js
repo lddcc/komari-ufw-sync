@@ -44,6 +44,8 @@ const STATUS_CMD = [
   'echo ufwdocker=$(grep -qs "BEGIN UFW AND DOCKER" /etc/ufw/after.rules && echo yes || echo no)',
   "echo trusted=$(ufw status 2>/dev/null | grep -c komari-ufw-sync)",
   "echo pub=$(ufw status 2>/dev/null | grep -F komari-ufw-pub | grep -oE '[0-9]+(:[0-9]+)?/(tcp|udp)' | sort -u | wc -l)",
+  'echo ts=$(pgrep -x tailscaled >/dev/null 2>&1 && echo up || (command -v tailscale >/dev/null 2>&1 && echo down || echo none))',
+  "echo tsport=$(ss -ulnpH 2>/dev/null | awk '/tailscaled/{print $5}' | sed 's/.*://' | sort -un | tr '\\n' ',' | sed 's/,$//')",
 ].join("; ");
 
 function sleep(ms) {
@@ -121,6 +123,8 @@ function loadSettings() {
     apply: s.apply === true,
     include_fleet: s.include_fleet !== false,
     interval_minutes: Number(s.interval_minutes != null ? s.interval_minutes : 5),
+    // auto-open tailscaled's (random) WireGuard UDP port on each apply (off by default)
+    manage_tailscale: s.manage_tailscale === true,
   };
 }
 function saveSettings(s) {
@@ -129,6 +133,7 @@ function saveSettings(s) {
     apply: "apply" in s ? !!s.apply : cur.apply,
     include_fleet: "include_fleet" in s ? !!s.include_fleet : cur.include_fleet,
     interval_minutes: "interval_minutes" in s ? (Number(s.interval_minutes) || 0) : cur.interval_minutes,
+    manage_tailscale: "manage_tailscale" in s ? !!s.manage_tailscale : cur.manage_tailscale,
   });
 }
 
@@ -153,7 +158,9 @@ function setNodePub(uuid, tcp, udp) {
   return savePub(map);
 }
 
-// last-known per-node status: { <uuid>: { ufw, ufwdocker, trusted, pub, ts } }
+// last-known per-node status:
+//   { <uuid>: { ufw, ufwdocker, trusted, pub, tailscale, tsport, ts } }
+// (`ts` is the fetch timestamp; `tailscale`/`tsport` are the daemon state/port)
 function loadStatus() {
   return readJson(STATUS_FILE, {}) || {};
 }
@@ -161,11 +168,14 @@ function mergeStatus(entries) {
   const map = loadStatus();
   (entries || []).forEach((e) => {
     if (!e || !e.uuid) return;
+    const prev = map[e.uuid] || {};
     map[e.uuid] = {
-      ufw: e.ufw != null ? e.ufw : (map[e.uuid] || {}).ufw || null,
-      ufwdocker: e.ufwdocker != null ? e.ufwdocker : (map[e.uuid] || {}).ufwdocker || null,
-      trusted: e.trusted != null ? e.trusted : (map[e.uuid] || {}).trusted,
-      pub: e.pub != null ? e.pub : (map[e.uuid] || {}).pub,
+      ufw: e.ufw != null ? e.ufw : prev.ufw || null,
+      ufwdocker: e.ufwdocker != null ? e.ufwdocker : prev.ufwdocker || null,
+      trusted: e.trusted != null ? e.trusted : prev.trusted,
+      pub: e.pub != null ? e.pub : prev.pub,
+      tailscale: e.tailscale != null ? e.tailscale : prev.tailscale || null,
+      tsport: e.tsport != null ? e.tsport : prev.tsport || null,
       ts: e.ts || Date.now(),
     };
   });
@@ -246,7 +256,7 @@ function targetNodes(nodes, uuids) {
   return nodes.filter((n) => sel.indexOf(n.uuid) !== -1);
 }
 
-function buildCommand(mode, wl4, wl6, ddns4, ddns6, ptcp, pudp) {
+function buildCommand(mode, wl4, wl6, ddns4, ddns6, ptcp, pudp, manageTs) {
   return (
     "echo " + APPLIER_B64 + " | base64 -d | MODE=" + mode +
     " WL_V4=" + shq(wl4.join(" ")) +
@@ -255,6 +265,7 @@ function buildCommand(mode, wl4, wl6, ddns4, ddns6, ptcp, pudp) {
     " DDNS_V6=" + shq(ddns6.join(" ")) +
     " PUBLIC_TCP=" + shq((ptcp || []).join(",")) +
     " PUBLIC_UDP=" + shq((pudp || []).join(",")) +
+    " MANAGE_TS=" + (manageTs ? "1" : "0") +
     " bash"
   );
 }
@@ -284,7 +295,7 @@ async function syncAll(mode, uuids) {
   const tasks = [];
   for (const n of target) {
     const np = pub[n.uuid] || { tcp: [], udp: [] };
-    const command = buildCommand(mode, wl4, wl6, wl.ddns_v4, wl.ddns_v6, np.tcp, np.udp);
+    const command = buildCommand(mode, wl4, wl6, wl.ddns_v4, wl.ddns_v6, np.tcp, np.udp, settings.manage_tailscale);
     try {
       const summary = await server.call("admin:exec", { command, clients: [n.uuid] });
       tasks.push({ uuid: n.uuid, node: n.name, task_id: summary && summary.task_id });
@@ -353,6 +364,8 @@ async function statusAll(uuids) {
       ufwdocker: kv.ufwdocker || null,
       trusted: kv.trusted != null && kv.trusted !== "" ? Number(kv.trusted) : null,
       pub: kv.pub != null && kv.pub !== "" ? Number(kv.pub) : null,
+      tailscale: kv.ts || null,
+      tsport: kv.tsport || null,
       exit_code: r.exit_code,
     };
   });
@@ -372,6 +385,8 @@ function parseStatusLine(output) {
     ufwdocker: kv.ufwdocker || null,
     trusted: kv.trusted != null && kv.trusted !== "" ? Number(kv.trusted) : null,
     pub: kv.pub != null && kv.pub !== "" ? Number(kv.pub) : null,
+    tailscale: kv.ts || null,
+    tsport: kv.tsport || null,
   };
 }
 
@@ -453,6 +468,7 @@ function load() {
       apply: s.apply,
       include_fleet: s.include_fleet,
       interval_minutes: s.interval_minutes,
+      manage_tailscale: s.manage_tailscale,
       ddns_v4: wl.ddns_v4,
       ddns_v6: wl.ddns_v6,
       static_v4: wl.static_v4,
