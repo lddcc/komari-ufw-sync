@@ -36,8 +36,15 @@ split() { echo "$1" | tr ',' ' ' | tr -s ' ' '\n' | sed '/^$/d'; }
 
 # Machine-readable status line the brain parses & persists. Always printed last
 # so every check/apply also refreshes the stored status.
-# current tailscaled WireGuard UDP port(s) (random on many builds; may drift)
-ts_ports() { ss -ulnpH 2>/dev/null | awk '/tailscaled/{print $5}' | sed 's/.*://' | sort -un; }
+# current tailscaled WireGuard UDP port(s) (random on many builds; may drift).
+# Scan every field of each tailscaled line for a "<addr>:<port>" token and take
+# the port — the LOCAL address ends in ":<digits>", the peer ends in ":*", so
+# this is robust to ss column-layout differences and never yields "*".
+ts_ports() {
+  ss -ulnpH 2>/dev/null | awk '
+    /tailscaled/ { for (i=1;i<=NF;i++) if ($i ~ /:[0-9]+$/) { p=$i; sub(/.*:/,"",p); print p } }
+  ' | sort -un
+}
 # tailscale daemon state: up (running) / down (installed, not running) / none
 ts_state() {
   if pgrep -x tailscaled >/dev/null 2>&1; then echo up
@@ -175,7 +182,8 @@ else
       [[ -z "$num" ]] && break
       ufw --force delete "$num" >/dev/null || break
     done
-    while IFS= read -r p; do [[ -z "$p" ]] && continue
+    while IFS= read -r p; do
+      [[ "$p" =~ ^[0-9]+$ ]] || continue   # never feed ufw a bad port (would abort under set -e)
       ufw allow "$p/udp" comment "$TAG_TS" >/dev/null
     done <<< "$desired_ts"
   fi

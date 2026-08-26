@@ -7,7 +7,7 @@
   "short": "ufw-sync",
   "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) and per-node public ports to every agent via admin:exec. Default is check/dry-run; flip the 'apply' switch to enforce. Edit whitelist lists and public ports on the plugin's admin page.",
   "author": "lddcc",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "url": "https://github.com/lddcc/komari-ufw-sync",
   "komari": ">=1.4.0",
   "entry": "script.js",

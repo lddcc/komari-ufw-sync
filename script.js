@@ -45,7 +45,7 @@ const STATUS_CMD = [
   "echo trusted=$(ufw status 2>/dev/null | grep -c komari-ufw-sync)",
   "echo pub=$(ufw status 2>/dev/null | grep -F komari-ufw-pub | grep -oE '[0-9]+(:[0-9]+)?/(tcp|udp)' | sort -u | wc -l)",
   'echo ts=$(pgrep -x tailscaled >/dev/null 2>&1 && echo up || (command -v tailscale >/dev/null 2>&1 && echo down || echo none))',
-  "echo tsport=$(ss -ulnpH 2>/dev/null | awk '/tailscaled/{print $5}' | sed 's/.*://' | sort -un | tr '\\n' ',' | sed 's/,$//')",
+  "echo tsport=$(ss -ulnpH 2>/dev/null | awk '/tailscaled/{for(i=1;i<=NF;i++)if($i~/:[0-9]+$/){p=$i;sub(/.*:/,\"\",p);print p}}' | sort -un | tr '\\n' ',' | sed 's/,$//')",
 ].join("; ");
 
 function sleep(ms) {
