@@ -5,9 +5,9 @@
     "en": "UFW Sync"
   },
   "short": "ufw-sync",
-  "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Default is check/dry-run; flip the 'apply' switch to enforce.",
+  "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) and per-node public ports to every agent via admin:exec. Default is check/dry-run; flip the 'apply' switch to enforce. Edit whitelist lists and public ports on the plugin's admin page.",
   "author": "lddcc",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "url": "https://github.com/lddcc/komari-ufw-sync",
   "komari": ">=1.4.0",
   "entry": "script.js",
@@ -57,46 +57,6 @@
         "help": {
           "zh_CN": "定时自动同步的间隔分钟数；0 表示关闭定时，只手动执行。改动即时生效，无需重载。",
           "en": "Minutes between scheduled syncs; 0 disables the schedule (manual only). Takes effect immediately, no reload."
-        }
-      },
-      {
-        "key": "ddns_v4",
-        "name": { "zh_CN": "家庭出口 DDNS (IPv4)", "en": "Home DDNS (IPv4)" },
-        "type": "string",
-        "default": "",
-        "help": {
-          "zh_CN": "空格/逗号分隔的主机名，各节点本地解析为 A 记录后放行。例：4hz.lddcc.cc 4ny.lddcc.cc",
-          "en": "Space/comma-separated hostnames, resolved locally on each node to A records. e.g. 4hz.lddcc.cc 4ny.lddcc.cc"
-        }
-      },
-      {
-        "key": "ddns_v6",
-        "name": { "zh_CN": "家庭出口 DDNS (IPv6)", "en": "Home DDNS (IPv6)" },
-        "type": "string",
-        "default": "",
-        "help": {
-          "zh_CN": "空格/逗号分隔的主机名，解析后掩为 /64 放行。例：6hz.lddcc.cc 6ny.lddcc.cc",
-          "en": "Space/comma-separated hostnames, resolved then masked to /64. e.g. 6hz.lddcc.cc 6ny.lddcc.cc"
-        }
-      },
-      {
-        "key": "static_v4",
-        "name": { "zh_CN": "静态白名单 (IPv4/CIDR)", "en": "Static whitelist (IPv4/CIDR)" },
-        "type": "string",
-        "default": "",
-        "help": {
-          "zh_CN": "额外固定放行的 v4 地址或网段，空格/逗号分隔。例：100.64.0.0/10 10.255.255.0/24 192.168.0.0/21",
-          "en": "Extra fixed v4 addrs/CIDRs, space/comma-separated. e.g. 100.64.0.0/10 10.255.255.0/24"
-        }
-      },
-      {
-        "key": "static_v6",
-        "name": { "zh_CN": "静态白名单 (IPv6/CIDR)", "en": "Static whitelist (IPv6/CIDR)" },
-        "type": "string",
-        "default": "",
-        "help": {
-          "zh_CN": "额外固定放行的 v6 地址或网段，空格/逗号分隔。",
-          "en": "Extra fixed v6 addrs/CIDRs, space/comma-separated."
         }
       },
       {

@@ -17,6 +17,7 @@
   button.primary { background: #2563eb; color: #fff; border-color: #2563eb; }
   button.danger { background: #dc2626; color: #fff; border-color: #dc2626; }
   button:disabled { opacity: .5; cursor: not-allowed; }
+  button.mini { padding: 3px 8px; font-size: 12px; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; }
   th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid rgba(128,128,128,.18); white-space: nowrap; }
   th { font-weight: 600; font-size: 12px; opacity: .75; }
@@ -26,31 +27,38 @@
   .warn { background: rgba(217,119,6,.15); color: #d97706; }
   .muted { background: rgba(128,128,128,.15); opacity: .8; }
   .row-off td:not(.selcol) { opacity: .45; }
+  .portin { width: 130px; padding: 4px 6px; border-radius: 6px; border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; font: inherit; font-size: 12.5px; }
   #log { margin-top: 14px; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 10px 12px; max-height: 340px; overflow: auto; white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12.5px; }
   .toast { font-size: 12.5px; opacity: .8; }
   .count { font-size: 12.5px; opacity: .8; }
   details#settings { margin-bottom: 14px; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 8px 12px; }
   details#settings summary { cursor: pointer; font-weight: 600; }
-  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 10px; margin: 10px 0; }
-  .grid label { display: flex; flex-direction: column; font-size: 12.5px; gap: 4px; }
-  .grid label.chk { flex-direction: row; align-items: center; gap: 6px; }
-  .grid input { padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; font: inherit; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 14px; margin: 12px 0; }
+  .field > .flab { font-size: 12.5px; font-weight: 600; margin-bottom: 6px; opacity: .85; }
+  .listwrap { display: flex; flex-direction: column; gap: 6px; }
+  .lrow { display: flex; gap: 6px; }
+  .lrow input { flex: 1; padding: 6px 8px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; font: inherit; }
+  .switches { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 6px 0 10px; font-size: 12.5px; }
+  .switches label { display: flex; align-items: center; gap: 6px; }
+  .switches input[type=number] { width: 72px; padding: 5px 7px; border-radius: 8px; border: 1px solid rgba(128,128,128,.4); background: transparent; color: inherit; font: inherit; }
 </style>
 </head>
 <body>
   <h1>UFW Sync — 节点选择与执行</h1>
-  <p class="sub">勾选需要参与同步的节点。<b>Dry-run</b> 仅计算差异不改动；<b>应用</b> 才真正写入 ufw（fail-safe：空白名单/无 ufw 会自动跳过）。</p>
+  <p class="sub">勾选参与同步的节点。<b>Dry-run</b> 仅计算差异不改动；<b>应用</b> 才写入 ufw（fail-safe：可信白名单为空/无 ufw 会自动跳过，绝不锁死）。可信白名单对来源全放行；公共端口按节点单独开放给全网（host + docker）。</p>
 
   <details id="settings" open>
-    <summary>设置 — DDNS / 静态白名单 / 频率</summary>
+    <summary>设置 — 可信白名单（列表）/ 频率</summary>
     <div class="grid">
-      <label>家庭 DDNS (IPv4)，空格分隔<input id="ddns_v4" placeholder="4hz.lddcc.cc 4ny.lddcc.cc" /></label>
-      <label>家庭 DDNS (IPv6) → /64<input id="ddns_v6" placeholder="6hz.lddcc.cc 6ny.lddcc.cc" /></label>
-      <label>静态白名单 (IPv4/CIDR)<input id="static_v4" placeholder="100.64.0.0/10 10.255.255.0/24" /></label>
-      <label>静态白名单 (IPv6/CIDR)<input id="static_v6" placeholder="" /></label>
+      <div class="field"><div class="flab">家庭 DDNS (IPv4) — 本地解析为 A 记录</div><div class="listwrap" id="ddns_v4"></div><button class="mini" data-add="ddns_v4">+ 添加</button></div>
+      <div class="field"><div class="flab">家庭 DDNS (IPv6) — 解析后掩为 /64</div><div class="listwrap" id="ddns_v6"></div><button class="mini" data-add="ddns_v6">+ 添加</button></div>
+      <div class="field"><div class="flab">静态白名单 (IPv4 / CIDR)</div><div class="listwrap" id="static_v4"></div><button class="mini" data-add="static_v4">+ 添加</button></div>
+      <div class="field"><div class="flab">静态白名单 (IPv6 / CIDR)</div><div class="listwrap" id="static_v6"></div><button class="mini" data-add="static_v6">+ 添加</button></div>
+    </div>
+    <div class="switches">
       <label>自动同步间隔（分钟，0=关闭）<input id="interval_minutes" type="number" min="0" step="1" /></label>
-      <label class="chk"><input id="include_fleet" type="checkbox" /> 自动放行机队各节点 IP</label>
-      <label class="chk"><input id="apply" type="checkbox" /> 启用定时自动下发（apply）</label>
+      <label><input id="include_fleet" type="checkbox" /> 自动放行机队各节点 IP</label>
+      <label><input id="apply" type="checkbox" /> 启用定时自动下发（apply）</label>
     </div>
     <button id="btnSaveCfg" class="primary">保存设置</button>
     <span class="toast" id="cfgToast"></span>
@@ -75,11 +83,14 @@
         <th>区域</th>
         <th>ufw 状态</th>
         <th class="num">已放行</th>
+        <th>公共端口 TCP</th>
+        <th>公共端口 UDP</th>
         <th>上次结果</th>
       </tr>
     </thead>
-    <tbody id="rows"><tr><td colspan="6">加载中…</td></tr></tbody>
+    <tbody id="rows"><tr><td colspan="8">加载中…</td></tr></tbody>
   </table>
+  <p class="sub" style="margin-top:8px">公共端口示例：<code>80,443,8000:8100</code>（逗号分隔，支持端口段）。改动后自动保存，下次同步生效。</p>
 
   <div id="log" hidden></div>
   <p class="toast" id="toast"></p>
@@ -87,18 +98,51 @@
 <script>
 const $ = (s) => document.querySelector(s);
 const api = (p, opt) => fetch(p, Object.assign({ credentials: "same-origin", headers: { "Content-Type": "application/json" } }, opt)).then(r => r.json());
-let nodes = [];        // [{uuid,name,region}]
+let nodes = [];        // [{uuid,name,region,...}]
 let selected = new Set();
+let pub = {};          // { uuid: {tcp:[],udp:[]} }
 
 function toast(m) { $("#toast").textContent = m || ""; }
 function logln(m) { const el = $("#log"); el.hidden = false; el.textContent += m + "\n"; el.scrollTop = el.scrollHeight; }
 function clearLog() { $("#log").textContent = ""; $("#log").hidden = true; }
+function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
 
+/* ---------- list editors (add/remove rows, no defaults/placeholders) ------- */
+function addListRow(id, value) {
+  const wrap = document.getElementById(id);
+  const row = document.createElement("div");
+  row.className = "lrow";
+  const inp = document.createElement("input");
+  inp.type = "text"; inp.value = value || ""; inp.spellcheck = false;
+  const del = document.createElement("button");
+  del.className = "mini"; del.textContent = "×"; del.title = "删除";
+  del.addEventListener("click", () => row.remove());
+  row.appendChild(inp); row.appendChild(del);
+  wrap.appendChild(row);
+  return inp;
+}
+function setList(id, values) {
+  const wrap = document.getElementById(id);
+  wrap.innerHTML = "";
+  (values || []).forEach(v => addListRow(id, v));
+}
+function collectList(id) {
+  return Array.from(document.getElementById(id).querySelectorAll("input"))
+    .map(i => i.value.trim()).filter(Boolean);
+}
+document.querySelectorAll("button[data-add]").forEach(b => {
+  b.addEventListener("click", () => { const inp = addListRow(b.getAttribute("data-add"), ""); inp.focus(); });
+});
+
+/* ---------- node table ---------------------------------------------------- */
 function ufwPill(s) {
   if (!s) return '<span class="pill muted">—</span>';
   if (s === "active") return '<span class="pill ok">active</span>';
   if (s === "missing") return '<span class="pill muted">missing</span>';
   return '<span class="pill warn">' + s + '</span>';
+}
+function pubStr(uuid, proto) {
+  const p = pub[uuid]; return p && p[proto] ? p[proto].join(",") : "";
 }
 
 function render() {
@@ -113,18 +157,30 @@ function render() {
       '<td>' + escapeHtml(n.region || "") + '</td>' +
       '<td data-ufw="' + n.uuid + '">' + ufwPill(n.ufw) + '</td>' +
       '<td class="num" data-trusted="' + n.uuid + '">' + (n.trusted == null ? "" : n.trusted) + '</td>' +
+      '<td><input class="portin" data-pub-tcp="' + n.uuid + '" value="' + escapeHtml(pubStr(n.uuid,"tcp")) + '" placeholder=""></td>' +
+      '<td><input class="portin" data-pub-udp="' + n.uuid + '" value="' + escapeHtml(pubStr(n.uuid,"udp")) + '" placeholder=""></td>' +
       '<td data-res="' + n.uuid + '">' + escapeHtml(n.lastResult || "") + '</td>';
     tb.appendChild(tr);
   });
-  tb.querySelectorAll('input[type=checkbox]').forEach(cb => cb.addEventListener("change", onToggle));
+  tb.querySelectorAll('input[data-u]').forEach(cb => cb.addEventListener("change", onToggle));
+  tb.querySelectorAll('input[data-pub-tcp],input[data-pub-udp]').forEach(inp => inp.addEventListener("change", onPubChange));
   updateCount();
 }
-function escapeHtml(s){ return String(s==null?"":s).replace(/[&<>"]/g, c=>({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c])); }
+
+function parsePorts(s){ return String(s||"").split(/[\s,]+/).map(x=>x.trim()).filter(Boolean); }
+function onPubChange(e) {
+  const el = e.target;
+  const uuid = el.getAttribute("data-pub-tcp") || el.getAttribute("data-pub-udp");
+  const tcp = parsePorts(document.querySelector('[data-pub-tcp="' + uuid + '"]').value);
+  const udp = parsePorts(document.querySelector('[data-pub-udp="' + uuid + '"]').value);
+  api("/ufw/api/pub", { method: "POST", body: JSON.stringify({ uuid, tcp, udp }) })
+    .then(r => { if (r && r.pub) pub = r.pub; toast("已保存公共端口"); })
+    .catch(() => toast("保存端口失败"));
+}
 
 function updateCount() {
   $("#selCount").textContent = "已选 " + selected.size + " / " + nodes.length;
   $("#chkHead").checked = nodes.length > 0 && selected.size === nodes.length;
-  render.dirty && null;
 }
 function onToggle(e) {
   const u = e.target.getAttribute("data-u");
@@ -132,7 +188,6 @@ function onToggle(e) {
   e.target.closest("tr").className = e.target.checked ? "" : "row-off";
   updateCount(); saveSelection();
 }
-
 function saveSelection() {
   api("/ufw/api/selection", { method: "POST", body: JSON.stringify({ uuids: Array.from(selected) }) })
     .then(() => toast("已保存选择")).catch(() => toast("保存失败"));
@@ -167,12 +222,10 @@ async function run(mode) {
     (r.results || []).forEach(x => {
       logln("--- " + x.node + "  exit=" + x.exit_code + " ---");
       logln(x.output || "");
-      const c = document.querySelector('[data-res="' + (findUuid(x.node)) + '"]');
     });
-    // update lastResult summary column
     (r.results || []).forEach(x => {
       const n = nodes.find(n => n.name === x.node); if (!n) return;
-      const first = (x.output || "").split("\n").find(l => /MODE=|SKIP|no change|ERROR|applied/.test(l)) || ("exit=" + x.exit_code);
+      const first = (x.output || "").split("\n").find(l => /MODE=|SKIP|no change|ERROR|applied|pub/.test(l)) || ("exit=" + x.exit_code);
       n.lastResult = first.replace(/^\[ufw-sync\]\s*/, "");
       const c = document.querySelector('[data-res="' + n.uuid + '"]'); if (c) c.textContent = n.lastResult;
     });
@@ -180,7 +233,6 @@ async function run(mode) {
     toast("完成");
   } catch (e) { toast("执行失败: " + e); logln("ERROR " + e); } finally { setBusy(false); }
 }
-function findUuid(name){ const n = nodes.find(n=>n.name===name); return n?n.uuid:""; }
 $("#btnDry").onclick = () => run("check");
 $("#btnApply").onclick = () => run("apply");
 
@@ -189,10 +241,8 @@ function setBusy(b) { ["btnStatus","btnDry","btnApply","btnAll","btnInvert","btn
 async function loadConfig() {
   try {
     const c = await api("/ufw/api/config");
-    $("#ddns_v4").value = c.ddns_v4 || "";
-    $("#ddns_v6").value = c.ddns_v6 || "";
-    $("#static_v4").value = c.static_v4 || "";
-    $("#static_v6").value = c.static_v6 || "";
+    setList("ddns_v4", c.ddns_v4); setList("ddns_v6", c.ddns_v6);
+    setList("static_v4", c.static_v4); setList("static_v6", c.static_v6);
     $("#interval_minutes").value = c.interval_minutes == null ? 5 : c.interval_minutes;
     $("#include_fleet").checked = c.include_fleet !== false;
     $("#apply").checked = c.apply === true;
@@ -200,10 +250,8 @@ async function loadConfig() {
 }
 $("#btnSaveCfg").onclick = async () => {
   const body = {
-    ddns_v4: $("#ddns_v4").value.trim(),
-    ddns_v6: $("#ddns_v6").value.trim(),
-    static_v4: $("#static_v4").value.trim(),
-    static_v6: $("#static_v6").value.trim(),
+    ddns_v4: collectList("ddns_v4"), ddns_v6: collectList("ddns_v6"),
+    static_v4: collectList("static_v4"), static_v6: collectList("static_v6"),
     interval_minutes: Number($("#interval_minutes").value) || 0,
     include_fleet: $("#include_fleet").checked,
     apply: $("#apply").checked,
@@ -221,9 +269,10 @@ async function init() {
   try {
     const r = await api("/ufw/api/state");
     nodes = r.nodes || [];
+    pub = r.pub || {};
     selected = new Set(r.selection == null ? nodes.map(n => n.uuid) : r.selection);
     render();
-  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="6">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
+  } catch (e) { $("#rows").innerHTML = '<tr><td colspan="8">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
 }
 init();
 </script>
