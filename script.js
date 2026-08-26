@@ -24,7 +24,9 @@ const PROBE_CMD = [
   'echo "host=$(hostname)"',
   'echo "user=$(id -un)"',
   'echo "ufw=$(command -v ufw >/dev/null && ufw status 2>/dev/null | head -1 || echo missing)"',
-  'echo "ufwdocker=$(grep -ql \\"BEGIN UFW AND DOCKER\\" /etc/ufw/after.rules 2>/dev/null && echo yes || echo no)"',
+  // NB: no outer double quotes here — shell double quotes do not nest, and the
+  // grep pattern needs its own. Output has no spaces, so bare echo is fine.
+  'echo ufwdocker=$(grep -qs "BEGIN UFW AND DOCKER" /etc/ufw/after.rules && echo yes || echo no)',
   'echo "pubv4=$(curl -s4 --max-time 3 https://api.ipify.org 2>/dev/null || echo na)"',
   'echo "pubv6=$(curl -s6 --max-time 3 https://api6.ipify.org 2>/dev/null || echo na)"',
 ].join("; ");
@@ -34,6 +36,28 @@ const POLL_INTERVAL_MS = 1500;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Guard for the manual /exec-test route. The route is mounted on the root
+ * engine WITHOUT Komari auth, so without this anyone on the internet could
+ * trigger a fleet-wide exec. Allow only:
+ *   - a logged-in admin (panel cookie -> principal), or
+ *   - a request carrying ?token=<trigger_token> matching plugin config.
+ * If no token is configured and the caller is not an admin, deny.
+ */
+function isAuthorized(req, cfg) {
+  const ctx = (req && req.context) || {};
+  const p = ctx.principal || {};
+  const roles = p.roles || [];
+  const isAdmin =
+    ctx.role === "admin" ||
+    p.type === "user" && roles.indexOf("admin") !== -1;
+  if (isAdmin) return true;
+
+  const want = cfg && cfg.trigger_token ? String(cfg.trigger_token) : "";
+  const got = req && req.query && req.query.token ? String(req.query.token) : "";
+  return want !== "" && got === want;
 }
 
 async function listClients() {
@@ -112,9 +136,21 @@ function load() {
   server.route("GET", "/exec-test", async (req, res) => {
     res.setHeader("Content-Type", "application/json; charset=utf-8");
     try {
+      const cfg = await server.getConfig();
+      if (!isAuthorized(req, cfg)) {
+        res.statusCode = 403;
+        res.end(
+          JSON.stringify({
+            error:
+              "forbidden — log in as admin, or set 'trigger_token' in plugin config and call /exec-test?token=<value>",
+          })
+        );
+        return;
+      }
       const out = await runProbe();
       res.end(JSON.stringify(out, null, 2));
     } catch (e) {
+      res.statusCode = 500;
       res.end(JSON.stringify({ error: String((e && e.message) || e) }));
     }
   });

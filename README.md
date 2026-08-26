@@ -73,11 +73,26 @@ https://raw.githubusercontent.com/lddcc/komari-ufw-sync/main/v1.json
 3. It declares sensitive permissions (`allowSystemRPC`, `allowRoutes`) → approve.
 4. **Enable** the plugin (plugins default to disabled).
 5. Trigger a probe:
-   - hit the plugin's `GET /exec-test` route (returns a JSON report), or
-   - wait for the `@every 5m` cron and read **plugin logs**.
+   - **Manual:** `GET https://<your-komari>/exec-test` — plugin routes mount at
+     the **root** path (no prefix). Returns a JSON report.
+   - **Scheduled:** wait for the `@every 5m` cron and read **plugin logs**
+     (`日志` button, or `GET /api/admin/plugin/logs?short=ufw-sync`).
 
-Expected: each online node returns `exit=0` with its `host/user/ufw/pubv4/pubv6`;
-offline nodes show up under `missing` / `queued_offline`.
+Expected: each online node returns `exit=0` with its `host/user/ufw/ufwdocker/pubv4/pubv6`;
+offline / non-responsive agents show up under `missing` / `queued_offline` (or `exit_code: null`).
+
+### ⚠️ Securing the manual route
+
+`/exec-test` is served on the root engine **without Komari auth** — otherwise
+anyone could trigger a fleet-wide exec. The handler therefore allows only:
+
+- a **logged-in admin** (panel session), or
+- a request with `?token=<value>` matching **`trigger_token`** in the plugin's
+  configuration.
+
+Set `trigger_token` in the plugin config to enable `curl`/browser triggering:
+`https://<your-komari>/exec-test?token=<value>`. Leave it empty to allow only
+logged-in admins + the cron.
 
 ## Manifest permissions
 

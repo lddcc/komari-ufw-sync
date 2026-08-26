@@ -4,7 +4,7 @@
   "short": "ufw-sync",
   "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Phase 1 = read-only probe (no firewall changes).",
   "author": "lddcc",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "url": "https://github.com/lddcc/komari-ufw-sync",
   "komari": ">=1.4.0",
   "entry": "script.js",
@@ -12,5 +12,20 @@
     "allowSystemRPC": true,
     "allowRoutes": true,
     "timeout": 60
+  },
+  "configuration": {
+    "type": "managed",
+    "data": [
+      {
+        "key": "trigger_token",
+        "name": { "zh_CN": "手动触发令牌", "en": "Manual trigger token" },
+        "type": "string",
+        "default": "",
+        "help": {
+          "zh_CN": "设置后可用 GET /exec-test?token=<此值> 手动触发。登录的管理员无需 token。留空则禁用匿名手动触发（仅 cron 与登录管理员可用）。",
+          "en": "When set, GET /exec-test?token=<value> triggers manually. Logged-in admins need no token. Empty disables anonymous manual triggering (cron + logged-in admins only)."
+        }
+      }
+    ]
   }
 }
