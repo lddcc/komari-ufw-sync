@@ -34,6 +34,7 @@ const SEL_FILE = STORE + "/selection.json";
 const TS_FILE = STORE + "/laststate.json";
 const WL_FILE = STORE + "/whitelist.json";
 const PUB_FILE = STORE + "/pubports.json";
+const SET_FILE = STORE + "/settings.json";
 
 // Read-only status probe: ufw state + counts of each of our tagged rule sets.
 const STATUS_CMD = [
@@ -106,6 +107,25 @@ function saveWL(w) {
     ddns_v6: cleanList(w.ddns_v6),
     static_v4: cleanList(w.static_v4),
     static_v6: cleanList(w.static_v6),
+  });
+}
+
+// operational settings, plugin-managed in fs (NOT Komari's managed config, so
+// saving never reloads the plugin). Defaults: dry-run, trust fleet, 5-min sync.
+function loadSettings() {
+  const s = readJson(SET_FILE, {}) || {};
+  return {
+    apply: s.apply === true,
+    include_fleet: s.include_fleet !== false,
+    interval_minutes: Number(s.interval_minutes != null ? s.interval_minutes : 5),
+  };
+}
+function saveSettings(s) {
+  const cur = loadSettings();
+  return writeJson(SET_FILE, {
+    apply: "apply" in s ? !!s.apply : cur.apply,
+    include_fleet: "include_fleet" in s ? !!s.include_fleet : cur.include_fleet,
+    interval_minutes: "interval_minutes" in s ? (Number(s.interval_minutes) || 0) : cur.interval_minutes,
   });
 }
 
@@ -217,7 +237,7 @@ function buildCommand(mode, wl4, wl6, ddns4, ddns6, ptcp, pudp) {
 }
 
 async function syncAll(mode, uuids) {
-  const cfg = (await server.getConfig()) || {};
+  const settings = loadSettings();
   const wl = loadWL();
   const pub = loadPub();
   const nodes = await listClients();
@@ -229,7 +249,7 @@ async function syncAll(mode, uuids) {
 
   let wl4 = wl.static_v4.slice();
   let wl6 = wl.static_v6.slice();
-  if (cfg.include_fleet !== false && cfg.include_fleet !== "false") {
+  if (settings.include_fleet) {
     const f = await fleetIps(nodes); // whitelist covers the whole fleet
     wl4 = wl4.concat(f.v4);
     wl6 = wl6.concat(f.v6);
@@ -380,15 +400,15 @@ function load() {
     }
   });
 
-  // UI: read editable config + whitelist lists
+  // UI: read editable settings + whitelist lists (all from plugin storage)
   server.route("GET", "/ufw/api/config", async (req, res) => {
     if (!(await guard(req, res))) return;
-    const c = (await server.getConfig()) || {};
+    const s = loadSettings();
     const wl = loadWL();
     json(res, 200, {
-      apply: c.apply === true || c.apply === "true",
-      include_fleet: c.include_fleet !== false && c.include_fleet !== "false",
-      interval_minutes: Number(c.interval_minutes != null ? c.interval_minutes : 5),
+      apply: s.apply,
+      include_fleet: s.include_fleet,
+      interval_minutes: s.interval_minutes,
       ddns_v4: wl.ddns_v4,
       ddns_v6: wl.ddns_v6,
       static_v4: wl.static_v4,
@@ -396,38 +416,22 @@ function load() {
     });
   });
 
-  // UI: save editable config (managed switches) + whitelist lists (plugin store)
+  // UI: save settings + whitelist lists — pure fs writes, so this is instant
+  // and NEVER reloads the plugin or triggers a sync/exec. (Operational settings
+  // live in plugin storage, not Komari's managed config, precisely so that
+  // saving doesn't call admin:setPluginConfiguration, which reloads the plugin
+  // — and reloading mid-request was what made saving hang.)
   server.route("POST", "/ufw/api/config", async (req, res) => {
     if (!(await guard(req, res))) return;
     try {
       const body = parseBody(req);
-      // whitelist lists -> plugin storage
       const wl = loadWL();
       ["ddns_v4", "ddns_v6", "static_v4", "static_v6"].forEach((k) => {
         if (k in body) wl[k] = cleanList(body[k]);
       });
-      saveWL(wl);
-      // operational switches -> managed config. Writing the managed config
-      // reloads the plugin (slow), so only do it when a switch actually
-      // changed; whitelist-list-only edits stay fs-only and return instantly.
-      // NOTE: this endpoint never triggers a sync/exec — it only persists.
-      const cur = (await server.getConfig()) || {};
-      const data = Object.assign({}, cur);
-      let cfgChanged = false;
-      if ("interval_minutes" in body) {
-        const v = Number(body.interval_minutes) || 0;
-        if (Number(cur.interval_minutes != null ? cur.interval_minutes : 5) !== v) { data.interval_minutes = v; cfgChanged = true; }
-      }
-      if ("apply" in body) {
-        const v = !!body.apply;
-        if ((cur.apply === true || cur.apply === "true") !== v) { data.apply = v; cfgChanged = true; }
-      }
-      if ("include_fleet" in body) {
-        const v = !!body.include_fleet;
-        if ((cur.include_fleet !== false && cur.include_fleet !== "false") !== v) { data.include_fleet = v; cfgChanged = true; }
-      }
-      if (cfgChanged) await server.call("admin:setPluginConfiguration", { short: SHORT, data });
-      json(res, 200, { ok: true, reloaded: cfgChanged });
+      const okWl = saveWL(wl);
+      const okSet = saveSettings(body);
+      json(res, okWl && okSet ? 200 : 500, { ok: okWl && okSet });
     } catch (e) {
       json(res, 500, { error: String((e && e.message) || e) });
     }
@@ -437,13 +441,13 @@ function load() {
   // elapsed since the last run (0 = disabled). Effective mode from `apply`.
   server.cron("@every 1m", async () => {
     try {
-      const cfg = (await server.getConfig()) || {};
-      const iv = Number(cfg.interval_minutes != null ? cfg.interval_minutes : 5);
+      const s = loadSettings();
+      const iv = Number(s.interval_minutes);
       if (!(iv > 0)) return;
       const now = Date.now();
       if (now - loadLastRun() < iv * 60 * 1000) return;
       saveLastRun(now); // claim the slot before running to avoid overlap
-      const mode = cfg.apply === true || cfg.apply === "true" ? "apply" : "check";
+      const mode = s.apply ? "apply" : "check";
       await syncAll(mode);
     } catch (e) {
       console.log("[ufw-sync] cron error: " + String((e && e.message) || e));

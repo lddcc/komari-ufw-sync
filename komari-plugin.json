@@ -7,7 +7,7 @@
   "short": "ufw-sync",
   "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) and per-node public ports to every agent via admin:exec. Default is check/dry-run; flip the 'apply' switch to enforce. Edit whitelist lists and public ports on the plugin's admin page.",
   "author": "lddcc",
-  "version": "0.5.2",
+  "version": "0.5.3",
   "url": "https://github.com/lddcc/komari-ufw-sync",
   "komari": ">=1.4.0",
   "entry": "script.js",
@@ -21,14 +21,14 @@
     {
       "file": "web/index.html",
       "title": { "zh_CN": "UFW 同步", "en": "UFW Sync" },
-      "icon": "shield",
+      "icon": "web/shield.svg",
       "type": "iframe",
       "visibility": "admin"
     },
     {
       "file": "web/config.html",
       "title": { "zh_CN": "UFW 配置", "en": "UFW Config" },
-      "icon": "settings",
+      "icon": "web/settings.svg",
       "type": "iframe",
       "visibility": "admin"
     }
@@ -36,36 +36,6 @@
   "configuration": {
     "type": "managed",
     "data": [
-      {
-        "key": "apply",
-        "name": { "zh_CN": "启用下发（否则仅 dry-run）", "en": "Apply changes (else dry-run)" },
-        "type": "switch",
-        "default": false,
-        "help": {
-          "zh_CN": "关闭时只计算并打印每台的 diff，不改动防火墙。确认 dry-run 无误后再打开。",
-          "en": "When off, only compute and print each node's diff without changing firewalls. Turn on after reviewing the dry-run."
-        }
-      },
-      {
-        "key": "include_fleet",
-        "name": { "zh_CN": "自动放行机队各节点 IP", "en": "Auto-trust fleet node IPs" },
-        "type": "switch",
-        "default": true,
-        "help": {
-          "zh_CN": "自动把 Komari 已知的所有节点公网 v4/v6 加入白名单（节点间互信）。",
-          "en": "Add every Komari node's public v4/v6 to the whitelist (fleet cross-trust)."
-        }
-      },
-      {
-        "key": "interval_minutes",
-        "name": { "zh_CN": "自动同步间隔（分钟，0=关闭）", "en": "Auto sync interval (minutes, 0=off)" },
-        "type": "number",
-        "default": 5,
-        "help": {
-          "zh_CN": "定时自动同步的间隔分钟数；0 表示关闭定时，只手动执行。改动即时生效，无需重载。",
-          "en": "Minutes between scheduled syncs; 0 disables the schedule (manual only). Takes effect immediately, no reload."
-        }
-      },
       {
         "key": "trigger_token",
         "name": { "zh_CN": "手动触发令牌", "en": "Manual trigger token" },
