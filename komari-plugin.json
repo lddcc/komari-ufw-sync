@@ -7,7 +7,7 @@
   "short": "ufw-sync",
   "description": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec. Default is check/dry-run; flip the 'apply' switch to enforce.",
   "author": "lddcc",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "url": "https://github.com/lddcc/komari-ufw-sync",
   "komari": ">=1.4.0",
   "entry": "script.js",
@@ -47,6 +47,16 @@
         "help": {
           "zh_CN": "自动把 Komari 已知的所有节点公网 v4/v6 加入白名单（节点间互信）。",
           "en": "Add every Komari node's public v4/v6 to the whitelist (fleet cross-trust)."
+        }
+      },
+      {
+        "key": "interval_minutes",
+        "name": { "zh_CN": "自动同步间隔（分钟，0=关闭）", "en": "Auto sync interval (minutes, 0=off)" },
+        "type": "number",
+        "default": 5,
+        "help": {
+          "zh_CN": "定时自动同步的间隔分钟数；0 表示关闭定时，只手动执行。改动即时生效，无需重载。",
+          "en": "Minutes between scheduled syncs; 0 disables the schedule (manual only). Takes effect immediately, no reload."
         }
       },
       {

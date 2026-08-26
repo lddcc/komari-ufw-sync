@@ -17,14 +17,17 @@
 const server = require("server");
 const fs = require("fs");
 
+const SHORT = "ufw-sync";
+
 // Injected at build time from agent/ufw-sync.sh (base64). See build.sh.
 const APPLIER_B64 = "__APPLIER_B64__";
 
 const POLL_ATTEMPTS = 30;
 const POLL_INTERVAL_MS = 2000;
 
-const SEL_FILE =
-  (typeof __storageDir__ !== "undefined" ? __storageDir__ : ".") + "/selection.json";
+const STORE = typeof __storageDir__ !== "undefined" ? __storageDir__ : ".";
+const SEL_FILE = STORE + "/selection.json";
+const TS_FILE = STORE + "/laststate.json";
 
 // Read-only status probe: reports ufw state + count of our tagged rules.
 const STATUS_CMD = [
@@ -59,6 +62,20 @@ function saveSelection(uuids) {
     return true;
   } catch (e) {
     return false;
+  }
+}
+function loadLastRun() {
+  try {
+    return JSON.parse(fs.readFileSync(TS_FILE, "utf8")).last || 0;
+  } catch (e) {
+    return 0;
+  }
+}
+function saveLastRun(ts) {
+  try {
+    fs.writeFileSync(TS_FILE, JSON.stringify({ last: ts }));
+  } catch (e) {
+    /* ignore */
   }
 }
 
@@ -283,11 +300,51 @@ function load() {
     }
   });
 
-  // Scheduled sync — effective mode from the `apply` config switch, on the
-  // saved selection. Read plugin logs for output.
-  server.cron("@every 5m", async () => {
+  // UI: read editable config values
+  server.route("GET", "/ufw/api/config", async (req, res) => {
+    if (!(await guard(req, res))) return;
+    const c = (await server.getConfig()) || {};
+    json(res, 200, {
+      apply: c.apply === true || c.apply === "true",
+      include_fleet: c.include_fleet !== false && c.include_fleet !== "false",
+      interval_minutes: Number(c.interval_minutes != null ? c.interval_minutes : 5),
+      ddns_v4: c.ddns_v4 || "",
+      ddns_v6: c.ddns_v6 || "",
+      static_v4: c.static_v4 || "",
+      static_v6: c.static_v6 || "",
+    });
+  });
+
+  // UI: save editable config values (merged into the managed config)
+  server.route("POST", "/ufw/api/config", async (req, res) => {
+    if (!(await guard(req, res))) return;
+    try {
+      const body = parseBody(req);
+      const data = Object.assign({}, (await server.getConfig()) || {});
+      ["ddns_v4", "ddns_v6", "static_v4", "static_v6"].forEach((k) => {
+        if (k in body) data[k] = String(body[k] || "");
+      });
+      if ("interval_minutes" in body) data.interval_minutes = Number(body.interval_minutes) || 0;
+      if ("apply" in body) data.apply = !!body.apply;
+      if ("include_fleet" in body) data.include_fleet = !!body.include_fleet;
+      await server.call("admin:setPluginConfiguration", { short: SHORT, data });
+      json(res, 200, { ok: true });
+    } catch (e) {
+      json(res, 500, { error: String((e && e.message) || e) });
+    }
+  });
+
+  // Scheduled sync — ticks every minute, runs when `interval_minutes` has
+  // elapsed since the last run (0 = disabled). Effective mode from `apply`.
+  // Interval changes take effect immediately without reloading the plugin.
+  server.cron("@every 1m", async () => {
     try {
       const cfg = (await server.getConfig()) || {};
+      const iv = Number(cfg.interval_minutes != null ? cfg.interval_minutes : 5);
+      if (!(iv > 0)) return;
+      const now = Date.now();
+      if (now - loadLastRun() < iv * 60 * 1000) return;
+      saveLastRun(now); // claim the slot before running to avoid overlap
       const mode = cfg.apply === true || cfg.apply === "true" ? "apply" : "check";
       await syncAll(mode);
     } catch (e) {

@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "updated_at": "2026-08-26T11:00:00.000Z",
+  "updated_at": "2026-08-26T11:30:00.000Z",
   "plugins": [
     {
       "name": {
@@ -12,12 +12,12 @@
         "zh_CN": "通过 admin:exec 把 UFW 白名单（机队 IP + DDNS 家庭出口）集中同步到每台 agent；含节点选择 UI。默认 dry-run。",
         "en": "Centrally sync a UFW whitelist (fleet IPs + DDNS home exits) to every agent via admin:exec, with a node-selection UI. Dry-run by default."
       },
-      "version": "0.3.0",
+      "version": "0.4.0",
       "author": "lddcc",
       "komari": ">=1.4.0",
       "url": "https://github.com/lddcc/komari-ufw-sync",
-      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.3.0/ufw-sync-0.3.0.zip",
-      "sha256": "85ea909c9628a5a3491b029236bdf556eee37efa6a7d8b96d8688442be3d870f"
+      "download": "https://github.com/lddcc/komari-ufw-sync/releases/download/v0.4.0/ufw-sync-0.4.0.zip",
+      "sha256": "4f391861c4edee57f1c7c3f2ae2df7d7f5dd1d74748bfdc0ce9e220896d0bb62"
     }
   ]
 }
