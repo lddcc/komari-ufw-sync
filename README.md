@@ -46,6 +46,7 @@ The selection is persisted; the cron acts on it too.
 | `include_fleet` | Auto-add every Komari node's public v4/v6 to the whitelist. |
 | `ddns_v4` / `ddns_v6` | Home DDNS hostnames, resolved on each node (v6 → `/64`). |
 | `static_v4` / `static_v6` | Extra fixed addrs/CIDRs (LAN, tailnet, …). |
+| `notify_on_apply` | Off = silent. On = push a Komari notification after an apply run that actually changed something (or failed) on any node. Every apply run is archived to the "同步历史" panel regardless. |
 | `trigger_token` | Token for anonymous `?token=` triggering (admins need none). |
 
 ## Install
@@ -63,7 +64,7 @@ permissions (`allowSystemRPC`, `allowRoutes`, `node`) → approve, then enable.
 
 | Permission | Why |
 | --- | --- |
-| `allowSystemRPC` | `admin:listClients` / `admin:getClient` / `admin:exec` / task results |
+| `allowSystemRPC` | `admin:listClients` / `admin:getClient` / `admin:exec` / task results / `admin:sendNotification` (for `notify_on_apply`, routed through Komari's own configured notification channels) |
 | `allowRoutes` | UI + JSON endpoints (`/ufw/api/*`) |
 | `node` | `fs` — persist node selection under the plugin storage dir |
 

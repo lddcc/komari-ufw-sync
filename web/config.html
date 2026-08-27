@@ -51,8 +51,10 @@
       <label><input id="include_fleet" type="checkbox" /> 自动放行机队各节点 IP</label>
       <label><input id="apply" type="checkbox" /> 启用定时自动下发（apply）</label>
       <label><input id="manage_tailscale" type="checkbox" /> 动态放行 tailscale 端口（WireGuard UDP，随机口自动跟随）</label>
+      <label><input id="notify_on_apply" type="checkbox" /> 应用后发送通知（有变更或失败时）</label>
     </div>
     <p class="sub" style="margin:8px 0 0">开启后，每次<b>应用</b>会探测 tailscaled 当前监听的（随机）UDP 端口并放行（标签 <code>komari-ufw-ts</code>），端口漂移时下次同步自动更新；关闭则清除该标签规则。仅在 apply 生效。</p>
+    <p class="sub" style="margin:4px 0 0">开启通知后，每次<b>应用</b>运行完成都会归档到「UFW 同步」页的同步历史；若本次确实有节点被变更或执行失败，还会通过 Komari 已配置的通知渠道（Telegram / Webhook 等，在系统设置里配置）推送一条摘要。无变化的静默 apply 不会打扰你。</p>
   </div>
 
   <div class="actions">
@@ -99,6 +101,7 @@ async function loadConfig() {
     $("#include_fleet").checked = c.include_fleet !== false;
     $("#apply").checked = c.apply === true;
     $("#manage_tailscale").checked = c.manage_tailscale === true;
+    $("#notify_on_apply").checked = c.notify_on_apply === true;
   } catch (e) { $("#cfgToast").textContent = "配置加载失败: " + e; }
 }
 $("#btnSaveCfg").onclick = async () => {
@@ -109,6 +112,7 @@ $("#btnSaveCfg").onclick = async () => {
     include_fleet: $("#include_fleet").checked,
     apply: $("#apply").checked,
     manage_tailscale: $("#manage_tailscale").checked,
+    notify_on_apply: $("#notify_on_apply").checked,
   };
   $("#cfgToast").textContent = "保存中…"; $("#btnSaveCfg").disabled = true;
   try {

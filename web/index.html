@@ -81,6 +81,14 @@
   <div id="log" hidden></div>
   <p class="toast" id="toast"></p>
 
+  <details id="histBox" style="margin-top:14px; border: 1px solid rgba(128,128,128,.25); border-radius: 10px; padding: 8px 12px;">
+    <summary style="cursor:pointer; font-weight:600;">同步历史（最近 <span id="histCount">0</span> 次归档）</summary>
+    <table style="margin-top:8px">
+      <thead><tr><th>时间</th><th>模式</th><th>下发</th><th>变更</th><th>失败节点</th></tr></thead>
+      <tbody id="histRows"><tr><td colspan="5">暂无记录</td></tr></tbody>
+    </table>
+  </details>
+
 <script>
 const $ = (s) => document.querySelector(s);
 const api = (p, opt) => fetch(p, Object.assign({ credentials: "same-origin", headers: { "Content-Type": "application/json" } }, opt)).then(r => r.json());
@@ -247,7 +255,7 @@ async function run(mode) {
       });
       const done = (r.results || []).length - (r.pending || 0);
       toast("已返回 " + done + " / " + (r.results || []).length);
-      if (r.done) { toast("完成（" + (r.results || []).length + " 台全部返回）"); setBusy(false); return; }
+      if (r.done) { toast("完成（" + (r.results || []).length + " 台全部返回）"); setBusy(false); loadHistory(); return; }
     }
     const stillPending = tasks.filter(t => !seen.has(t.uuid)).map(t => t.node);
     logln("(超时未返回: " + stillPending.join(", ") + " — 稍后点「刷新状态」或重试)");
@@ -257,6 +265,24 @@ async function run(mode) {
 }
 $("#btnDry").onclick = () => run("check");
 $("#btnApply").onclick = () => run("apply");
+
+/* ---------- sync history (archived runs) ---------------------------------- */
+async function loadHistory() {
+  try {
+    const r = await api("/ufw/api/history");
+    const hist = r.history || [];
+    $("#histCount").textContent = hist.length;
+    const tb = $("#histRows");
+    if (hist.length === 0) { tb.innerHTML = '<tr><td colspan="5">暂无记录</td></tr>'; return; }
+    tb.innerHTML = hist.map(h => (
+      '<tr><td>' + escapeHtml(new Date(h.ts).toLocaleString("zh-CN")) + '</td>' +
+      '<td>' + escapeHtml(h.mode) + '</td>' +
+      '<td class="num">' + escapeHtml(h.dispatched) + '</td>' +
+      '<td>' + (h.changed ? '<span class="pill ok">是</span>' : '<span class="pill muted">否</span>') + '</td>' +
+      '<td>' + (h.failed && h.failed.length ? '<span class="pill warn">' + escapeHtml(h.failed.join(", ")) + '</span>' : "") + '</td></tr>'
+    )).join("");
+  } catch (e) { /* history panel is best-effort */ }
+}
 
 function setBusy(b) { ["btnStatus","btnDry","btnApply","btnAll","btnInvert","btnReset"].forEach(id => $("#"+id).disabled = b); }
 
@@ -276,6 +302,7 @@ async function init() {
   } catch (e) { $("#rows").innerHTML = '<tr><td colspan="11">加载失败：' + escapeHtml(String(e)) + '</td></tr>'; }
 }
 init();
+loadHistory();
 </script>
 </body>
 </html>

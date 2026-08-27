@@ -37,6 +37,8 @@ const PUB_FILE = STORE + "/pubports.json";
 const SET_FILE = STORE + "/settings.json";
 const STATUS_FILE = STORE + "/laststatus.json";
 const PENDING_FILE = STORE + "/pending.json"; // last dispatched run (task_ids), for async result polling
+const HIST_FILE = STORE + "/history.json"; // archived run results, newest first, capped
+const HIST_MAX = 50;
 
 // Read-only status probe: ufw state, ufw-docker integration, and counts of each
 // of our tagged rule sets.
@@ -126,6 +128,9 @@ function loadSettings() {
     interval_minutes: Number(s.interval_minutes != null ? s.interval_minutes : 5),
     // auto-open tailscaled's (random) WireGuard UDP port on each apply (off by default)
     manage_tailscale: s.manage_tailscale === true,
+    // send a Komari notification after an apply run that actually changed
+    // something (or failed) on any node (off by default)
+    notify_on_apply: s.notify_on_apply === true,
   };
 }
 function saveSettings(s) {
@@ -135,6 +140,7 @@ function saveSettings(s) {
     include_fleet: "include_fleet" in s ? !!s.include_fleet : cur.include_fleet,
     interval_minutes: "interval_minutes" in s ? (Number(s.interval_minutes) || 0) : cur.interval_minutes,
     manage_tailscale: "manage_tailscale" in s ? !!s.manage_tailscale : cur.manage_tailscale,
+    notify_on_apply: "notify_on_apply" in s ? !!s.notify_on_apply : cur.notify_on_apply,
   });
 }
 
@@ -182,6 +188,60 @@ function mergeStatus(entries) {
   });
   writeJson(STATUS_FILE, map);
   return map;
+}
+
+// archived run history — capped list, newest first
+function loadHistory() {
+  return readJson(HIST_FILE, []) || [];
+}
+function appendHistory(entry) {
+  const hist = loadHistory();
+  hist.unshift(entry);
+  writeJson(HIST_FILE, hist.slice(0, HIST_MAX));
+  return entry;
+}
+
+// Per-node summary from a completed run's raw results: whether the applier
+// actually changed anything ("applied and reloaded" vs "nothing to apply" /
+// "check mode" in its own log), or failed outright.
+function summarizeResults(results) {
+  const nodes = (results || []).map((r) => {
+    const out = String(r.output || "");
+    return {
+      uuid: r.uuid,
+      node: r.node,
+      exit_code: r.exit_code,
+      ok: r.exit_code === 0,
+      changed: /applied and reloaded/.test(out),
+    };
+  });
+  return { nodes, changed: nodes.some((n) => n.changed), failed: nodes.filter((n) => !n.ok).map((n) => n.node) };
+}
+
+// Archive every completed run (check or apply). For apply runs that actually
+// changed something (or failed on some node), also push a Komari notification
+// via admin:sendNotification when the `notify_on_apply` switch is on — quiet
+// no-op applies never page anyone.
+async function archiveAndNotify(mode, dispatched, results) {
+  const sum = summarizeResults(results);
+  const entry = { ts: Date.now(), mode, dispatched, changed: sum.changed, failed: sum.failed, nodes: sum.nodes };
+  appendHistory(entry);
+  if (mode !== "apply" || (!sum.changed && sum.failed.length === 0)) return entry;
+  if (!loadSettings().notify_on_apply) return entry;
+  try {
+    const lines = sum.nodes
+      .filter((n) => n.changed || !n.ok)
+      .map((n) => (n.ok ? "✅ " : "❌ ") + n.node + (n.changed ? " (变更)" : "") + (n.ok ? "" : " exit=" + n.exit_code));
+    const message =
+      "[UFW Sync] apply @ " + new Date(entry.ts).toLocaleString("zh-CN") + "\n" + lines.join("\n") +
+      (sum.failed.length ? "\n失败节点: " + sum.failed.join(", ") : "");
+    await server.call("admin:sendNotification", {
+      event: { event: "ufw-sync", message: message, time: new Date(entry.ts).toISOString() },
+    });
+  } catch (e) {
+    console.log("[ufw-sync] notify failed: " + String((e && e.message) || e));
+  }
+  return entry;
 }
 
 /** Guard for root-mounted plugin routes (no Komari auth on them). */
@@ -295,18 +355,19 @@ async function dispatchRun(mode, uuids) {
   wl4 = uniq(wl4);
   wl6 = uniq(wl6);
 
+  const runId = Date.now();
   const tasks = [];
   for (const n of target) {
     const np = pub[n.uuid] || { tcp: [], udp: [] };
     const command = buildCommand(mode, wl4, wl6, wl.ddns_v4, wl.ddns_v6, np.tcp, np.udp, settings.manage_tailscale);
     try {
       const summary = await server.call("admin:exec", { command, clients: [n.uuid] });
-      tasks.push({ uuid: n.uuid, node: n.name, task_id: (summary && summary.task_id) || null });
+      tasks.push({ uuid: n.uuid, node: n.name, task_id: (summary && summary.task_id) || null, run_id: runId });
     } catch (e) {
-      tasks.push({ uuid: n.uuid, node: n.name, task_id: null, err: String((e && e.message) || e) });
+      tasks.push({ uuid: n.uuid, node: n.name, task_id: null, run_id: runId, err: String((e && e.message) || e) });
     }
   }
-  writeJson(PENDING_FILE, { mode: mode, ts: Date.now(), tasks: tasks });
+  writeJson(PENDING_FILE, { mode: mode, ts: runId, tasks: tasks, archived: false });
   console.log(`[ufw-sync] dispatched mode=${mode} targets=${target.length} wl_v4=${wl4.length} wl_v6=${wl6.length}`);
   return {
     mode: mode,
@@ -320,8 +381,9 @@ async function dispatchRun(mode, uuids) {
 // mark the rest pending, persist status for the completed ones. The page calls
 // this repeatedly until done. (Falls back to the persisted PENDING run.)
 async function collectResults(tasks) {
+  const pendingMeta = readJson(PENDING_FILE, {}) || {};
   if (!Array.isArray(tasks) || tasks.length === 0) {
-    tasks = ((readJson(PENDING_FILE, {}) || {}).tasks) || [];
+    tasks = pendingMeta.tasks || [];
   }
   const statusEntries = [];
   let pending = 0;
@@ -347,10 +409,20 @@ async function collectResults(tasks) {
     results.push({ uuid: t.uuid, node: t.node, exit_code: r.exit_code, output: output, pending: false });
   }
   const statusMap = mergeStatus(statusEntries); // persist refreshed status
+  const done = pending === 0;
+  // Archive + notify exactly once per run, the first time it's observed done.
+  // run_id ties this `tasks` list back to the still-current PENDING_FILE entry
+  // (a newer dispatch may have since overwritten it — skip archiving a stale one).
+  const runId = (tasks[0] && tasks[0].run_id) || null;
+  if (done && tasks.length > 0 && runId && pendingMeta.ts === runId && !pendingMeta.archived) {
+    pendingMeta.archived = true;
+    writeJson(PENDING_FILE, pendingMeta);
+    await archiveAndNotify(pendingMeta.mode || "check", tasks.length, results);
+  }
   return {
     results: results,
     pending: pending,
-    done: pending === 0,
+    done: done,
     status: results.map((r) => Object.assign({ uuid: r.uuid, node: r.node }, statusMap[r.uuid] || {})),
   };
 }
@@ -510,6 +582,12 @@ function load() {
     }
   });
 
+  // UI: archived run history (newest first), for the "同步历史" panel
+  server.route("GET", "/ufw/api/history", async (req, res) => {
+    if (!(await guard(req, res))) return;
+    json(res, 200, { history: loadHistory() });
+  });
+
   // UI: read editable settings + whitelist lists (all from plugin storage)
   server.route("GET", "/ufw/api/config", async (req, res) => {
     if (!(await guard(req, res))) return;
@@ -520,6 +598,7 @@ function load() {
       include_fleet: s.include_fleet,
       interval_minutes: s.interval_minutes,
       manage_tailscale: s.manage_tailscale,
+      notify_on_apply: s.notify_on_apply,
       ddns_v4: wl.ddns_v4,
       ddns_v6: wl.ddns_v6,
       static_v4: wl.static_v4,
